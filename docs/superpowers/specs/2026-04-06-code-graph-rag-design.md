@@ -151,11 +151,20 @@ Each language's tree-sitter node type names are declared in `language-map.json`:
     "function": ["function_declaration", "arrow_function", "method_definition"],
     "class": ["class_declaration"],
     "import": ["import_statement"]
+  },
+  "graphql": {
+    "function": ["operation_definition", "fragment_definition"],
+    "class": ["object_type_definition", "input_object_type_definition", "interface_type_definition", "enum_type_definition"],
+    "import": []
   }
 }
 ```
 
+Initial language support: **TypeScript, TSX, JavaScript, JSX, Python, Go, Java, Rust, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, GraphQL, HTML, CSS, YAML, JSON, SQL, Bash/Shell, Lua, Zig, Elixir, Dart**.
+
 One extractor engine reads this mapping and adapts to any language. Adding a language means adding a few lines to the JSON. A fallback heuristic handles languages without an explicit mapping by searching for common node type patterns.
+
+Note: markup/data languages (HTML, CSS, YAML, JSON) have limited extraction — they get `File` nodes and basic structural elements but no function/class semantics. They are still included so they appear in repo structure and file-level search results.
 
 ### Git Post-Commit Hook
 
@@ -163,13 +172,10 @@ Installed by `code-graph-rag install-hook`. Runs after every commit:
 
 ```bash
 #!/bin/sh
-changed=$(git diff --name-only HEAD~1 HEAD -- '*.ts' '*.py' '*.go' '*.java' '*.rs' '*.c' '*.cpp')
-if [ -n "$changed" ]; then
-  code-graph-rag index --changed &
-fi
+code-graph-rag index --changed &
 ```
 
-Runs in the background so it doesn't slow down the developer's workflow.
+Runs in the background so it doesn't slow down the developer's workflow. The `--changed` flag uses `git diff` internally and filters to supported file extensions based on the language map, so the hook itself doesn't need to hardcode extensions.
 
 ### Staleness Detection
 

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Graph RAG — Visualization</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; }
+    #header { padding: 12px 16px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 14px; }
+    #header h1 { font-size: 16px; color: #58a6ff; }
+    #main { display: flex; flex: 1; overflow: hidden; }
+    #graph { flex: 1; }
+    #panel { width: 300px; background: #161b22; border-left: 1px solid #30363d; padding: 16px; overflow-y: auto; font-size: 12px; }
+    #panel h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
+    #panel pre { white-space: pre-wrap; word-break: break-all; color: #8b949e; }
+    #status { color: #8b949e; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <h1>Code Graph RAG</h1>
+    <span id="status">Loading graph...</span>
+  </div>
+  <div id="main">
+    <div id="graph"></div>
+    <div id="panel">
+      <h2>Details</h2>
+      <p id="panel-hint" style="color:#8b949e">Click a node to see details</p>
+      <pre id="panel-content" style="display:none"></pre>
+    </div>
+  </div>
+  <script src="graph.js"></script>
+</body>
+</html>

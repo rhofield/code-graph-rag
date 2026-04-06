@@ -41,26 +41,19 @@ export const DEFAULT_CONFIG: Config = {
   repos: [],
 };
 
-function deepMerge<T extends Record<string, unknown>>(
-  base: T,
-  override: Partial<T>
-): T {
-  const result = { ...base };
-  for (const key of Object.keys(override) as (keyof T)[]) {
-    const val = override[key];
-    if (
-      val !== undefined &&
-      typeof val === "object" &&
-      !Array.isArray(val) &&
-      val !== null
-    ) {
-      result[key] = deepMerge(
-        result[key] as Record<string, unknown>,
-        val as Record<string, unknown>
-      ) as T[keyof T];
-    } else if (val !== undefined) {
-      result[key] = val as T[keyof T];
-    }
+function deepMerge(
+  base: Config,
+  override: Partial<Config>
+): Config {
+  const result: Config = structuredClone(base);
+  if (override.neo4j) {
+    result.neo4j = { ...result.neo4j, ...override.neo4j };
+  }
+  if (override.index) {
+    result.index = { ...result.index, ...override.index };
+  }
+  if (override.repos) {
+    result.repos = override.repos;
   }
   return result;
 }

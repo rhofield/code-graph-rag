@@ -1,0 +1,43 @@
+{
+  "name": "code-graph-rag",
+  "version": "0.1.0",
+  "description": "Graph-RAG code indexer for AI agents — token-efficient code search via MCP tools backed by Neo4j",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "code-graph-rag": "./bin/code-graph-rag.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "commander": "^12.1.0",
+    "glob": "^11.0.1",
+    "neo4j-driver": "^5.27.0",
+    "ora": "^8.1.1",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.24.3",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "src/indexer/language-map.json",
+    "src/visualize/public",
+    "docker-compose.yml"
+  ]
+}

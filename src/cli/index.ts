@@ -27,4 +27,12 @@ registerInstallHookCommand(program);
 registerQueryCommand(program);
 registerVisualizeCommand(program);
 
+program
+  .command("mcp-serve")
+  .description("Start the MCP server (used by Claude Code)")
+  .action(async () => {
+    const { startMcpServer } = await import("../mcp/index.js");
+    await startMcpServer();
+  });
+
 program.parse();

@@ -1,0 +1,101 @@
+{
+  "typescript": {
+    "function": ["function_declaration", "arrow_function", "method_definition"],
+    "class": ["class_declaration"],
+    "import": ["import_statement"],
+    "call": ["call_expression"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "tsx": {
+    "function": ["function_declaration", "arrow_function", "method_definition"],
+    "class": ["class_declaration"],
+    "import": ["import_statement"],
+    "call": ["call_expression"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "javascript": {
+    "function": ["function_declaration", "arrow_function", "method_definition"],
+    "class": ["class_declaration"],
+    "import": ["import_statement"],
+    "call": ["call_expression"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "python": {
+    "function": ["function_definition"],
+    "class": ["class_definition"],
+    "import": ["import_from_statement", "import_statement"],
+    "call": ["call"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "go": {
+    "function": ["function_declaration", "method_declaration"],
+    "class": ["type_declaration"],
+    "import": ["import_declaration", "import_spec"],
+    "call": ["call_expression"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "java": {
+    "function": ["method_declaration", "constructor_declaration"],
+    "class": ["class_declaration", "interface_declaration", "enum_declaration"],
+    "import": ["import_declaration"],
+    "call": ["method_invocation"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "rust": {
+    "function": ["function_item"],
+    "class": ["struct_item", "enum_item", "trait_item", "impl_item"],
+    "import": ["use_declaration"],
+    "call": ["call_expression"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "c": {
+    "function": ["function_definition"],
+    "class": ["struct_specifier"],
+    "import": ["preproc_include"],
+    "call": ["call_expression"],
+    "name_field": "declarator",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "cpp": {
+    "function": ["function_definition"],
+    "class": ["class_specifier", "struct_specifier"],
+    "import": ["preproc_include"],
+    "call": ["call_expression"],
+    "name_field": "declarator",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "ruby": {
+    "function": ["method", "singleton_method"],
+    "class": ["class", "module"],
+    "import": ["call"],
+    "call": ["call", "method_call"],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "graphql": {
+    "function": ["operation_definition", "fragment_definition"],
+    "class": ["object_type_definition", "input_object_type_definition", "interface_type_definition", "enum_type_definition"],
+    "import": [],
+    "call": [],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "arguments_definition"
+  }
+}

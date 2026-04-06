@@ -32,7 +32,14 @@ export async function writeGraphEntities(
     await session.run(repoQ.cypher, repoQ.params);
 
     // Upsert file
-    const fileQ = upsertFile(meta);
+    const fileQ = upsertFile({
+      path: meta.filePath,
+      relativePath: meta.relativePath,
+      repoPath: meta.repoPath,
+      language: meta.language,
+      hash: meta.hash,
+      lastModified: meta.lastModified,
+    });
     await session.run(fileQ.cypher, fileQ.params);
 
     // Delete old children for this file (clean re-index)

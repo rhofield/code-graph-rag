@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { writeGraphEntities } from "../../src/indexer/graph-writer.js";
+import { writeGraphEntities, writeRepoOnce } from "../../src/indexer/graph-writer.js";
 import type { GraphEntities } from "../../src/indexer/extractor.js";
 
 const mockRun = vi.fn().mockResolvedValue({ records: [] });
@@ -59,8 +59,8 @@ describe("writeGraphEntities", () => {
       lastModified: 1700000000,
     });
 
-    // Should have run queries for: repo, file, delete old children, re-link file, class, function, call
-    expect(mockRun.mock.calls.length).toBeGreaterThanOrEqual(5);
+    // Should have run queries for: file, delete old children, class, function, call
+    expect(mockRun.mock.calls.length).toBe(5);
   });
 
   it("handles empty entities without error", async () => {
@@ -80,7 +80,21 @@ describe("writeGraphEntities", () => {
       lastModified: 1700000000,
     });
 
-    // Should still write repo and file nodes
-    expect(mockRun.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Should still write file node and delete old children
+    expect(mockRun.mock.calls.length).toBe(2);
+  });
+});
+
+describe("writeRepoOnce", () => {
+  beforeEach(() => {
+    mockRun.mockClear();
+  });
+
+  it("upserts repository node exactly once", async () => {
+    await writeRepoOnce(mockDb as any, "/project");
+    expect(mockRun).toHaveBeenCalledTimes(1);
+    const cypher = mockRun.mock.calls[0][0];
+    expect(cypher).toContain("Repository");
+    expect(cypher).toContain("MERGE");
   });
 });

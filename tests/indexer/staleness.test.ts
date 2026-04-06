@@ -33,6 +33,20 @@ describe("staleness detection", () => {
       writeFileSync(file2, "const x = 2;");
       expect(computeFileHash(file1)).not.toBe(computeFileHash(file2));
     });
+
+    it("accepts content string and returns matching hash", () => {
+      const file = join(tempDir, "test.ts");
+      const content = "const x = 1;";
+      writeFileSync(file, content);
+      const hashFromFile = computeFileHash(file);
+      const hashFromContent = computeFileHash(file, content);
+      expect(hashFromContent).toBe(hashFromFile);
+    });
+
+    it("computes hash from content without reading disk when content provided", () => {
+      const hash = computeFileHash("/nonexistent/file.ts", "const x = 1;");
+      expect(hash).toHaveLength(64); // SHA-256 hex
+    });
   });
 
   describe("isFileStale", () => {

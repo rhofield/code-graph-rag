@@ -4,7 +4,7 @@ import type { DbConnection } from "../db/connection.js";
 import type { IndexConfig } from "../config.js";
 import { initParser, parseFile, detectLanguage } from "./parser.js";
 import { extractGraphEntities } from "./extractor.js";
-import { writeGraphEntities } from "./graph-writer.js";
+import { writeGraphEntities, writeRepoOnce } from "./graph-writer.js";
 import { computeFileHash, getFileMtime, isFileStale } from "./staleness.js";
 
 export async function discoverFiles(
@@ -90,6 +90,8 @@ export async function indexRepository(
     errors: [],
   };
 
+  await writeRepoOnce(db, absRoot);
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     options.onProgress?.(i + 1, files.length, file);
@@ -110,7 +112,7 @@ export async function indexRepository(
         relativePath: relative(absRoot, file),
         repoPath: absRoot,
         language: parseResult.language,
-        hash: computeFileHash(file),
+        hash: computeFileHash(file, parseResult.source),
         lastModified: getFileMtime(file),
       });
 

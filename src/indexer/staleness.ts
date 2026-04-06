@@ -3,9 +3,9 @@ import { readFileSync, statSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
-export function computeFileHash(filePath: string): string {
-  const content = readFileSync(filePath);
-  return createHash("sha256").update(content).digest("hex");
+export function computeFileHash(filePath: string, content?: string | Buffer): string {
+  const data = content ?? readFileSync(filePath);
+  return createHash("sha256").update(data).digest("hex");
 }
 
 export function getFileMtime(filePath: string): number {

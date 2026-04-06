@@ -1,0 +1,16 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: code-graph-rag-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/code-graph-rag
+      NEO4J_PLUGINS: '[]'
+    volumes:
+      - code-graph-rag-data:/data
+    restart: unless-stopped
+
+volumes:
+  code-graph-rag-data:

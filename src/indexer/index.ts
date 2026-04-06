@@ -5,6 +5,7 @@ import type { IndexConfig } from "../config.js";
 import { initParser, parseFile, detectLanguage } from "./parser.js";
 import { extractGraphEntities } from "./extractor.js";
 import { writeGraphEntities, writeRepoOnce } from "./graph-writer.js";
+import { BatchGraphWriter } from "./batch-writer.js";
 import { computeFileHash, getFileMtime, isFileStale } from "./staleness.js";
 
 export async function discoverFiles(
@@ -92,6 +93,8 @@ export async function indexRepository(
 
   await writeRepoOnce(db, absRoot);
 
+  const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     options.onProgress?.(i + 1, files.length, file);
@@ -107,7 +110,7 @@ export async function indexRepository(
         file
       );
 
-      await writeGraphEntities(db, entities, {
+      batchWriter.add(entities, {
         filePath: file,
         relativePath: relative(absRoot, file),
         repoPath: absRoot,
@@ -126,6 +129,8 @@ export async function indexRepository(
       });
     }
   }
+
+  await batchWriter.flush();
 
   return result;
 }

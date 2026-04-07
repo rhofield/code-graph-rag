@@ -8,6 +8,7 @@ import { writeGraphEntities, writeRepoOnce } from "./graph-writer.js";
 import { BatchGraphWriter } from "./batch-writer.js";
 import { getRepositoryCommit, upsertRepositoryWithCommit, deleteFileAndRelationships } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
+import { runParallelPipeline } from "./parallel-pipeline.js";
 
 export async function discoverFiles(
   rootPath: string,
@@ -45,6 +46,8 @@ export async function indexRepository(
   options: {
     changedOnly?: boolean;
     specificPath?: string;
+    concurrency?: number;
+    maxMemoryMB?: number;
     onProgress?: (current: number, total: number, file: string) => void;
   } = {}
 ): Promise<IndexResult> {
@@ -128,45 +131,53 @@ export async function indexRepository(
 
   await writeRepoOnce(db, absRoot);
 
-  const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+  const concurrency = options.concurrency ?? 8;
+  const maxMemoryBytes = (options.maxMemoryMB ?? 8192) * 1024 * 1024;
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    options.onProgress?.(i + 1, files.length, file);
-
-    try {
-      const parseResult = await parseFile(file);
-      if (!parseResult) continue;
-
-      const entities = extractGraphEntities(
-        parseResult.tree,
-        parseResult.language,
-        parseResult.source,
-        file
-      );
-
-      batchWriter.add(entities, {
-        filePath: file,
-        relativePath: relative(absRoot, file),
-        repoPath: absRoot,
-        language: parseResult.language,
-        hash: computeFileHash(file, parseResult.source),
-        lastModified: getFileMtime(file),
-      });
-
-      result.filesIndexed++;
-      result.functionsFound += entities.functions.length;
-      result.classesFound += entities.classes.length;
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  if (concurrency > 1) {
+    const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+    const pipelineResult = await runParallelPipeline({
+      files,
+      absRoot,
+      concurrency,
+      maxMemoryBytes,
+      parseFn: parseFile,
+      extractFn: extractGraphEntities,
+      batchWriter,
+      computeHashFn: computeFileHash,
+      getMtimeFn: getFileMtime,
+      onProgress: options.onProgress,
+    });
+    result.filesIndexed = pipelineResult.filesIndexed;
+    result.functionsFound = pipelineResult.functionsFound;
+    result.classesFound = pipelineResult.classesFound;
+    result.errors = pipelineResult.errors;
+  } else {
+    // Sequential fallback
+    const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      options.onProgress?.(i + 1, files.length, file);
+      try {
+        const parseResult = await parseFile(file);
+        if (!parseResult) continue;
+        const entities = extractGraphEntities(parseResult.tree, parseResult.language, parseResult.source, file);
+        batchWriter.add(entities, {
+          filePath: file, relativePath: relative(absRoot, file), repoPath: absRoot,
+          language: parseResult.language,
+          hash: computeFileHash(file, parseResult.source),
+          lastModified: getFileMtime(file),
+        });
+        result.filesIndexed++;
+        result.functionsFound += entities.functions.length;
+        result.classesFound += entities.classes.length;
+      } catch (error) {
+        result.errors.push({ file, error: error instanceof Error ? error.message : String(error) });
+      }
     }
+    await batchWriter.waitForPendingFlush();
+    await batchWriter.flush();
   }
-
-  await batchWriter.waitForPendingFlush();
-  await batchWriter.flush();
 
   if (result.errors.length === 0) {
     const commitSha = getCurrentCommitSha(absRoot);

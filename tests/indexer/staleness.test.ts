@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { computeFileHash, isFileStale } from "../../src/indexer/staleness.js";
+import { computeFileHash, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "../../src/indexer/staleness.js";
 
 describe("staleness detection", () => {
   let tempDir: string;
@@ -67,6 +67,30 @@ describe("staleness detection", () => {
 
     it("returns true when file does not exist (deleted)", () => {
       expect(isFileStale("/nonexistent/file.ts", "abc", 0)).toBe(true);
+    });
+  });
+
+  describe("getChangedFilesSinceCommit", () => {
+    it("accepts a base commit SHA parameter", () => {
+      const result = getChangedFilesSinceCommit("/nonexistent-repo", "abc123");
+      expect(result).toEqual({ changed: [], deleted: [] });
+    });
+
+    it("returns GitDiffResult shape with includeDeleted option", () => {
+      const result = getChangedFilesSinceCommit("/nonexistent-repo", "HEAD~1", {
+        includeDeleted: true,
+      });
+      expect(result).toHaveProperty("changed");
+      expect(result).toHaveProperty("deleted");
+      expect(Array.isArray(result.changed)).toBe(true);
+      expect(Array.isArray(result.deleted)).toBe(true);
+    });
+  });
+
+  describe("getCurrentCommitSha", () => {
+    it("returns null for non-git directory", () => {
+      const sha = getCurrentCommitSha("/nonexistent-repo");
+      expect(sha).toBeNull();
     });
   });
 });

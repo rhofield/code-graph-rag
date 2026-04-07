@@ -31,18 +31,52 @@ export function isFileStale(
   return currentHash !== storedHash;
 }
 
-export function getChangedFilesSinceCommit(repoPath: string): string[] {
+export interface GitDiffResult {
+  changed: string[];
+  deleted: string[];
+}
+
+export function getChangedFilesSinceCommit(
+  repoPath: string,
+  baseSha?: string,
+  options?: { includeDeleted?: boolean }
+): GitDiffResult {
+  const base = baseSha ?? "HEAD~1";
   try {
-    const result = execFileSync("git", ["diff", "--name-only", "HEAD~1", "HEAD"], {
-      cwd: repoPath,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return result
-      .trim()
-      .split("\n")
-      .filter((f: string) => f.length > 0);
+    if (options?.includeDeleted) {
+      const addedModified = execFileSync(
+        "git",
+        ["diff", "--name-only", "--diff-filter=ACM", `${base}..HEAD`],
+        { cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      ).trim().split("\n").filter((f: string) => f.length > 0);
+
+      const deleted = execFileSync(
+        "git",
+        ["diff", "--name-only", "--diff-filter=D", `${base}..HEAD`],
+        { cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      ).trim().split("\n").filter((f: string) => f.length > 0);
+
+      return { changed: addedModified, deleted };
+    }
+
+    const result = execFileSync(
+      "git",
+      ["diff", "--name-only", `${base}..HEAD`],
+      { cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+    ).trim().split("\n").filter((f: string) => f.length > 0);
+
+    return { changed: result, deleted: [] };
   } catch {
-    return [];
+    return { changed: [], deleted: [] };
+  }
+}
+
+export function getCurrentCommitSha(repoPath: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
   }
 }

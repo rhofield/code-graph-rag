@@ -250,6 +250,32 @@ export function batchUpsertCallRelationships(items: Array<{
   };
 }
 
+export function upsertRepositoryWithCommit(data: {
+  path: string;
+  name: string;
+  lastIndexedCommit: string;
+}): CypherQuery {
+  return {
+    cypher: `
+      MERGE (r:Repository {path: $path})
+      SET r.name = $name,
+          r.lastIndexedAt = datetime(),
+          r.lastIndexedCommit = $lastIndexedCommit
+    `,
+    params: data,
+  };
+}
+
+export function getRepositoryCommit(data: { path: string }): CypherQuery {
+  return {
+    cypher: `
+      MATCH (r:Repository {path: $path})
+      RETURN r.lastIndexedCommit AS lastIndexedCommit
+    `,
+    params: data,
+  };
+}
+
 export function deleteFileAndRelationships(data: {
   filePath: string;
 }): CypherQuery {

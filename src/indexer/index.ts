@@ -4,8 +4,11 @@ import type { DbConnection } from "../db/connection.js";
 import type { IndexConfig } from "../config.js";
 import { initParser, parseFile, detectLanguage } from "./parser.js";
 import { extractGraphEntities } from "./extractor.js";
-import { writeGraphEntities } from "./graph-writer.js";
-import { computeFileHash, getFileMtime, isFileStale } from "./staleness.js";
+import { writeGraphEntities, writeRepoOnce } from "./graph-writer.js";
+import { BatchGraphWriter } from "./batch-writer.js";
+import { getRepositoryCommit, upsertRepositoryWithCommit, deleteFileAndRelationships } from "../db/queries.js";
+import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
+import { runParallelPipeline } from "./parallel-pipeline.js";
 
 export async function discoverFiles(
   rootPath: string,
@@ -43,6 +46,8 @@ export async function indexRepository(
   options: {
     changedOnly?: boolean;
     specificPath?: string;
+    concurrency?: number;
+    maxMemoryMB?: number;
     onProgress?: (current: number, total: number, file: string) => void;
   } = {}
 ): Promise<IndexResult> {
@@ -61,25 +66,59 @@ export async function indexRepository(
 
   // If changedOnly, check staleness against existing graph
   if (options.changedOnly) {
+    // Try git-based incremental first
     const session = db.session();
+    let usedGitBased = false;
     try {
-      const result = await session.run(
-        "MATCH (f:File) WHERE f.path STARTS WITH $repoPath RETURN f.path AS path, f.hash AS hash, f.lastModified AS lastModified",
-        { repoPath: absRoot }
-      );
-      const indexed = new Map(
-        result.records.map((r) => [
-          r.get("path"),
-          { hash: r.get("hash"), lastModified: r.get("lastModified") },
-        ])
-      );
-      files = files.filter((f) => {
-        const existing = indexed.get(f);
-        if (!existing) return true; // New file
-        return isFileStale(f, existing.hash, existing.lastModified);
-      });
+      const commitQ = getRepositoryCommit({ path: absRoot });
+      const result = await session.run(commitQ.cypher, commitQ.params);
+      const lastCommit: string | null = result.records[0]?.get("lastIndexedCommit") ?? null;
+
+      if (lastCommit) {
+        const diff = getChangedFilesSinceCommit(absRoot, lastCommit, { includeDeleted: true });
+
+        if (diff.error) {
+          // Git failed (invalid SHA, shallow clone, etc.) — fall through to hash/mtime
+        } else {
+          // Remove deleted files from the index
+          for (const relPath of diff.deleted) {
+            const absPath = resolve(absRoot, relPath);
+            const deleteQ = deleteFileAndRelationships({ filePath: absPath });
+            await session.run(deleteQ.cypher, deleteQ.params);  // let errors propagate
+          }
+
+          // Filter files to only changed ones
+          const changedAbsPaths = new Set(diff.changed.map((f) => resolve(absRoot, f)));
+          files = files.filter((f) => changedAbsPaths.has(f));
+          usedGitBased = true;
+        }
+      }
     } finally {
       await session.close();
+    }
+
+    // Fall back to mtime/hash-based staleness if git-based wasn't used
+    if (!usedGitBased) {
+      const session2 = db.session();
+      try {
+        const result = await session2.run(
+          "MATCH (f:File) WHERE f.path STARTS WITH $repoPath RETURN f.path AS path, f.hash AS hash, f.lastModified AS lastModified",
+          { repoPath: absRoot }
+        );
+        const indexed = new Map(
+          result.records.map((r) => [
+            r.get("path"),
+            { hash: r.get("hash"), lastModified: r.get("lastModified") },
+          ])
+        );
+        files = files.filter((f) => {
+          const existing = indexed.get(f);
+          if (!existing) return true;
+          return isFileStale(f, existing.hash, existing.lastModified);
+        });
+      } finally {
+        await session2.close();
+      }
     }
   }
 
@@ -90,38 +129,70 @@ export async function indexRepository(
     errors: [],
   };
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    options.onProgress?.(i + 1, files.length, file);
+  await writeRepoOnce(db, absRoot);
 
-    try {
-      const parseResult = await parseFile(file);
-      if (!parseResult) continue;
+  const concurrency = options.concurrency ?? 8;
+  const maxMemoryBytes = (options.maxMemoryMB ?? 8192) * 1024 * 1024;
 
-      const entities = extractGraphEntities(
-        parseResult.tree,
-        parseResult.language,
-        parseResult.source,
-        file
-      );
+  if (concurrency > 1) {
+    const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+    const pipelineResult = await runParallelPipeline({
+      files,
+      absRoot,
+      concurrency,
+      maxMemoryBytes,
+      parseFn: parseFile,
+      extractFn: extractGraphEntities,
+      batchWriter,
+      computeHashFn: computeFileHash,
+      getMtimeFn: getFileMtime,
+      onProgress: options.onProgress,
+    });
+    result.filesIndexed = pipelineResult.filesIndexed;
+    result.functionsFound = pipelineResult.functionsFound;
+    result.classesFound = pipelineResult.classesFound;
+    result.errors = pipelineResult.errors;
+  } else {
+    // Sequential fallback
+    const batchWriter = new BatchGraphWriter(db, { batchSize: 50 });
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      options.onProgress?.(i + 1, files.length, file);
+      try {
+        const parseResult = await parseFile(file);
+        if (!parseResult) continue;
+        const entities = extractGraphEntities(parseResult.tree, parseResult.language, parseResult.source, file);
+        batchWriter.add(entities, {
+          filePath: file, relativePath: relative(absRoot, file), repoPath: absRoot,
+          language: parseResult.language,
+          hash: computeFileHash(file, parseResult.source),
+          lastModified: getFileMtime(file),
+        });
+        result.filesIndexed++;
+        result.functionsFound += entities.functions.length;
+        result.classesFound += entities.classes.length;
+      } catch (error) {
+        result.errors.push({ file, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    await batchWriter.waitForPendingFlush();
+    await batchWriter.flush();
+  }
 
-      await writeGraphEntities(db, entities, {
-        filePath: file,
-        relativePath: relative(absRoot, file),
-        repoPath: absRoot,
-        language: parseResult.language,
-        hash: computeFileHash(file),
-        lastModified: getFileMtime(file),
-      });
-
-      result.filesIndexed++;
-      result.functionsFound += entities.functions.length;
-      result.classesFound += entities.classes.length;
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  if (result.errors.length === 0) {
+    const commitSha = getCurrentCommitSha(absRoot);
+    if (commitSha) {
+      const session = db.session();
+      try {
+        const q = upsertRepositoryWithCommit({
+          path: absRoot,
+          name: absRoot.split("/").pop() || absRoot,
+          lastIndexedCommit: commitSha,
+        });
+        await session.run(q.cypher, q.params);
+      } finally {
+        await session.close();
+      }
     }
   }
 

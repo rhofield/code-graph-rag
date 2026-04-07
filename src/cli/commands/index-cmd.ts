@@ -13,6 +13,8 @@ export function registerIndexCommand(program: Command): void {
     .option("--changed", "Only index changed files")
     .option("--path <path>", "Index a specific path")
     .option("--repo <repoPath>", "Index a different repository")
+    .option("--concurrency <n>", "Number of parallel parse tasks", "8")
+    .option("--max-memory <mb>", "Max buffer memory in MB before backpressure", "8192")
     .action(async (opts) => {
       const repoPath = resolve(opts.repo || ".");
       const config = loadConfig(repoPath);
@@ -22,6 +24,8 @@ export function registerIndexCommand(program: Command): void {
       const result = await indexRepository(db, repoPath, config.index, {
         changedOnly: opts.changed,
         specificPath: opts.path,
+        concurrency: parseInt(opts.concurrency, 10),
+        maxMemoryMB: parseInt(opts.maxMemory, 10),
         onProgress: (current, total) => {
           spinner.text = `Indexing... ${current}/${total}`;
         },

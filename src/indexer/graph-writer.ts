@@ -17,6 +17,16 @@ export interface FileMetadata {
   lastModified: number;
 }
 
+export async function writeRepoOnce(db: DbConnection, repoPath: string): Promise<void> {
+  const session = db.session();
+  try {
+    const repoQ = upsertRepository({ path: repoPath, name: repoPath.split("/").pop() || repoPath });
+    await session.run(repoQ.cypher, repoQ.params);
+  } finally {
+    await session.close();
+  }
+}
+
 export async function writeGraphEntities(
   db: DbConnection,
   entities: GraphEntities,
@@ -24,13 +34,6 @@ export async function writeGraphEntities(
 ): Promise<void> {
   const session = db.session();
   try {
-    // Upsert repository
-    const repoQ = upsertRepository({
-      path: meta.repoPath,
-      name: meta.repoPath.split("/").pop() || meta.repoPath,
-    });
-    await session.run(repoQ.cypher, repoQ.params);
-
     // Upsert file
     const fileQ = upsertFile({
       path: meta.filePath,
@@ -51,9 +54,6 @@ export async function writeGraphEntities(
       `,
       { filePath: meta.filePath }
     );
-
-    // Re-link file to repo (in case delete removed it)
-    await session.run(fileQ.cypher, fileQ.params);
 
     // Upsert classes
     for (const cls of entities.classes) {

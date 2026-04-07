@@ -30,6 +30,7 @@ export function registerReindex(
                 filesIndexed: result.filesIndexed,
                 functionsFound: result.functionsFound,
                 classesFound: result.classesFound,
+                orphansRemoved: result.orphansRemoved,
                 errors: result.errors.length,
               },
               null,

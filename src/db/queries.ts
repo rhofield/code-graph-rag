@@ -289,3 +289,29 @@ export function deleteFileAndRelationships(data: {
     params: data,
   };
 }
+
+export function getAllFilePathsUnderPrefix(data: {
+  pathPrefix: string;
+}): CypherQuery {
+  return {
+    cypher: `
+      MATCH (f:File)
+      WHERE f.path STARTS WITH $pathPrefix
+      RETURN f.path AS path
+    `,
+    params: data,
+  };
+}
+
+export function batchDeleteOrphanFiles(filePaths: string[]): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $filePaths AS fp
+      MATCH (f:File {path: fp})
+      OPTIONAL MATCH (f)-[:CONTAINS]->(child)
+      OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
+      DETACH DELETE method, child, f
+    `,
+    params: { filePaths },
+  };
+}

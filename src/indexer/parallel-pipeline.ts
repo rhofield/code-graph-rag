@@ -38,6 +38,7 @@ export interface PipelineOptions {
   computeHashFn: (filePath: string, content?: string) => string;
   getMtimeFn: (filePath: string) => number;
   onProgress?: (current: number, total: number, file: string) => void;
+  onFlushProgress?: (completed: number, total: number) => void;
 }
 
 export interface PipelineResult {
@@ -48,7 +49,8 @@ export interface PipelineResult {
 }
 
 export async function runParallelPipeline(options: PipelineOptions): Promise<PipelineResult> {
-  const { files, absRoot, concurrency, maxMemoryBytes, parseFn, extractFn, batchWriter, computeHashFn, getMtimeFn, onProgress } = options;
+  const { files, absRoot, concurrency, maxMemoryBytes, parseFn, extractFn, batchWriter, computeHashFn, getMtimeFn, onProgress, onFlushProgress } = options;
+  if (onFlushProgress) batchWriter.onFlushProgress = onFlushProgress;
 
   const sem = new Semaphore(concurrency);
   const result: PipelineResult = { filesIndexed: 0, functionsFound: 0, classesFound: 0, errors: [] };
@@ -63,35 +65,38 @@ export async function runParallelPipeline(options: PipelineOptions): Promise<Pip
     const release = await sem.acquire();
     try {
       const parseResult = await parseFn(file);
-      progressCounter++;
-      onProgress?.(progressCounter, files.length, file);
 
-      if (!parseResult) return;
+      if (parseResult) {
+        let entities: ReturnType<typeof extractFn>;
+        try {
+          entities = extractFn(parseResult.tree, parseResult.language, parseResult.source, file);
+        } finally {
+          parseResult.tree.delete();
+        }
 
-      const entities = extractFn(parseResult.tree, parseResult.language, parseResult.source, file);
+        batchWriter.add(entities! as any, {
+          filePath: file,
+          relativePath: relative(absRoot, file),
+          repoPath: absRoot,
+          language: parseResult.language,
+          hash: computeHashFn(file, parseResult.source),
+          lastModified: getMtimeFn(file),
+        });
 
-      batchWriter.add(entities as any, {
-        filePath: file,
-        relativePath: relative(absRoot, file),
-        repoPath: absRoot,
-        language: parseResult.language,
-        hash: computeHashFn(file, parseResult.source),
-        lastModified: getMtimeFn(file),
-      });
+        // Backpressure: flush if memory limit exceeded after add
+        if (batchWriter.estimatedMemoryBytes >= maxMemoryBytes) {
+          await batchWriter.flush();
+        }
 
-      // Backpressure: flush if memory limit exceeded after add
-      if (batchWriter.estimatedMemoryBytes >= maxMemoryBytes) {
-        await batchWriter.flush();
+        result.filesIndexed++;
+        result.functionsFound += entities!.functions.length;
+        result.classesFound += entities!.classes.length;
       }
-
-      result.filesIndexed++;
-      result.functionsFound += entities.functions.length;
-      result.classesFound += entities.classes.length;
     } catch (error) {
-      progressCounter++;
-      onProgress?.(progressCounter, files.length, file);
       result.errors.push({ file, error: error instanceof Error ? error.message : String(error) });
     } finally {
+      progressCounter++;
+      onProgress?.(progressCounter, files.length, file);
       release();
     }
   });

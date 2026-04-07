@@ -56,9 +56,13 @@ export function stopNeo4j(): void {
 }
 
 export async function waitForNeo4j(
-  _uri: string,
-  maxAttempts = 30
+  uri: string,
+  username: string,
+  password: string,
+  maxAttempts = 60
 ): Promise<boolean> {
+  // First wait for the process to start via admin check
+  let processReady = false;
   for (let i = 0; i < maxAttempts; i++) {
     try {
       execFileSync(
@@ -66,10 +70,33 @@ export async function waitForNeo4j(
         ["exec", CONTAINER_NAME, "neo4j-admin", "server", "status"],
         { encoding: "utf-8", stdio: "pipe" }
       );
-      return true;
+      processReady = true;
+      break;
     } catch {
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
-  return false;
+  if (!processReady) return false;
+
+  // Then wait for the Bolt port to accept connections
+  const neo4j = await import("neo4j-driver");
+  const driver = neo4j.default.driver(
+    uri,
+    neo4j.default.auth.basic(username, password)
+  );
+  try {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const session = driver.session();
+        await session.run("RETURN 1");
+        await session.close();
+        return true;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    return false;
+  } finally {
+    await driver.close();
+  }
 }

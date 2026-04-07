@@ -35,7 +35,39 @@ export const DEFAULT_CONFIG: Config = {
   },
   index: {
     include: ["**/*"],
-    exclude: ["node_modules", "dist", "vendor", ".git", "build", "__pycache__"],
+    exclude: [
+      // VCS
+      ".git",
+      // JS/TS dependencies, build outputs, framework caches
+      "node_modules",
+      "bower_components",
+      "dist",
+      "build",
+      "vendor",
+      ".next",
+      ".nuxt",
+      "coverage",
+      ".nyc_output",
+      // Python virtual environments and vendored packages
+      "venv",
+      ".venv",
+      "virtualenv",
+      ".tox",
+      "site-packages",
+      // Python tool caches
+      "__pycache__",
+      ".pytest_cache",
+      ".mypy_cache",
+      ".ruff_cache",
+      // Rust / JVM build outputs
+      "target",
+      ".gradle",
+      // IDE state
+      ".idea",
+      ".vscode",
+      // Generic caches
+      ".cache",
+    ],
     languages: "auto",
   },
   repos: [],

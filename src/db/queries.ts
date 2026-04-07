@@ -144,6 +144,138 @@ export function upsertImportSymbol(data: {
   };
 }
 
+export function batchUpsertFiles(items: Array<{
+  path: string; relativePath: string; repoPath: string;
+  language: string; hash: string; lastModified: number;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (r:Repository {path: item.repoPath})
+      MERGE (f:File {path: item.path})
+      SET f.relativePath = item.relativePath,
+          f.language = item.language,
+          f.hash = item.hash,
+          f.lastModified = item.lastModified
+      MERGE (r)-[:CONTAINS_FILE]->(f)
+    `,
+    params: { items },
+  };
+}
+
+export function batchDeleteFileChildren(filePaths: string[]): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $filePaths AS fp
+      MATCH (f:File {path: fp})-[:CONTAINS]->(child)
+      OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
+      DETACH DELETE method, child
+    `,
+    params: { filePaths },
+  };
+}
+
+export function batchUpsertFunctions(items: Array<{
+  name: string; filePath: string; startLine: number; endLine: number;
+  signature: string; docstring: string | null; snippet: string;
+  className: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (f:File {path: item.filePath})
+      MERGE (fn:Function {name: item.name, filePath: item.filePath})
+      ON CREATE SET fn.className = null
+      SET fn.startLine = item.startLine,
+          fn.endLine = item.endLine,
+          fn.signature = item.signature,
+          fn.docstring = item.docstring,
+          fn.snippet = item.snippet
+      MERGE (f)-[:CONTAINS]->(fn)
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertMethods(items: Array<{
+  name: string; filePath: string; startLine: number; endLine: number;
+  signature: string; docstring: string | null; snippet: string;
+  className: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (c:Class {name: item.className})<-[:CONTAINS]-(:File {path: item.filePath})
+      MERGE (fn:Function {name: item.name, filePath: item.filePath, className: item.className})
+      SET fn.startLine = item.startLine,
+          fn.endLine = item.endLine,
+          fn.signature = item.signature,
+          fn.docstring = item.docstring,
+          fn.snippet = item.snippet
+      MERGE (c)-[:HAS_METHOD]->(fn)
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertClasses(items: Array<{
+  name: string; filePath: string; startLine: number; endLine: number;
+  docstring: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (f:File {path: item.filePath})
+      MERGE (c:Class {name: item.name, filePath: item.filePath})
+      SET c.startLine = item.startLine,
+          c.endLine = item.endLine,
+          c.docstring = item.docstring
+      MERGE (f)-[:CONTAINS]->(c)
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertCallRelationships(items: Array<{
+  callerName: string; callerFilePath: string; calleeName: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (caller:Function {name: item.callerName, filePath: item.callerFilePath})
+      MATCH (callee:Function {name: item.calleeName})
+      MERGE (caller)-[:CALLS]->(callee)
+    `,
+    params: { items },
+  };
+}
+
+export function upsertRepositoryWithCommit(data: {
+  path: string;
+  name: string;
+  lastIndexedCommit: string;
+}): CypherQuery {
+  return {
+    cypher: `
+      MERGE (r:Repository {path: $path})
+      SET r.name = $name,
+          r.lastIndexedAt = datetime(),
+          r.lastIndexedCommit = $lastIndexedCommit
+    `,
+    params: data,
+  };
+}
+
+export function getRepositoryCommit(data: { path: string }): CypherQuery {
+  return {
+    cypher: `
+      MATCH (r:Repository {path: $path})
+      RETURN r.lastIndexedCommit AS lastIndexedCommit
+    `,
+    params: data,
+  };
+}
+
 export function deleteFileAndRelationships(data: {
   filePath: string;
 }): CypherQuery {

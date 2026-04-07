@@ -8,6 +8,8 @@ import {
   upsertCallRelationship,
   upsertImportRelationship,
   deleteFileAndRelationships,
+  upsertRepositoryWithCommit,
+  getRepositoryCommit,
 } from "../../src/db/queries.js";
 
 describe("query builders", () => {
@@ -92,5 +94,21 @@ describe("query builders", () => {
     });
     expect(cypher).toContain("DETACH DELETE");
     expect(params.filePath).toBe("/home/user/project/src/old.ts");
+  });
+
+  it("upsertRepositoryWithCommit includes lastIndexedCommit", () => {
+    const { cypher, params } = upsertRepositoryWithCommit({
+      path: "/project",
+      name: "project",
+      lastIndexedCommit: "abc123def",
+    });
+    expect(cypher).toContain("lastIndexedCommit");
+    expect(params.lastIndexedCommit).toBe("abc123def");
+  });
+
+  it("getRepositoryCommit returns query for lastIndexedCommit", () => {
+    const { cypher, params } = getRepositoryCommit({ path: "/project" });
+    expect(cypher).toContain("lastIndexedCommit");
+    expect(params.path).toBe("/project");
   });
 });

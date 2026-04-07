@@ -20,18 +20,25 @@ export function registerIndexCommand(program: Command): void {
       const config = loadConfig(repoPath);
       const db = createConnection(config.neo4j);
 
-      const spinner = ora("Indexing...").start();
+      const spinner = ora("Parsing files...").start();
       const result = await indexRepository(db, repoPath, config.index, {
         changedOnly: opts.changed,
         specificPath: opts.path,
         concurrency: parseInt(opts.concurrency, 10),
         maxMemoryMB: parseInt(opts.maxMemory, 10),
         onProgress: (current, total) => {
-          spinner.text = `Indexing... ${current}/${total}`;
+          spinner.text = `Parsing files... ${current}/${total}`;
+        },
+        onFlushProgress: (completed, total) => {
+          spinner.text = `Writing to database... ${completed}/${total} batches`;
         },
       });
+      const orphanSuffix =
+        result.orphansRemoved > 0
+          ? ` (removed ${result.orphansRemoved} orphaned files)`
+          : "";
       spinner.succeed(
-        `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ${result.classesFound} classes`
+        `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ${result.classesFound} classes${orphanSuffix}`
       );
 
       if (result.errors.length > 0) {

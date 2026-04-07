@@ -1,7 +1,10 @@
 // src/indexer/parser.ts
 import { readFileSync, existsSync } from "node:fs";
-import { extname, resolve, join } from "node:path";
+import { extname, resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import Parser from "web-tree-sitter";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let parser: Parser | null = null;
 const languageCache = new Map<string, Parser.Language>();
@@ -60,9 +63,8 @@ async function loadLanguage(languageName: string): Promise<Parser.Language | nul
   }
 
   const wasmPath = join(
-    "node_modules",
-    "tree-sitter-wasms",
-    "out",
+    __dirname,
+    "../../node_modules/tree-sitter-wasms/out",
     `tree-sitter-${languageName}.wasm`
   );
 

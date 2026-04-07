@@ -9,13 +9,28 @@ async function loadGraph() {
   const status = document.getElementById("status");
   status.textContent = "Fetching graph data...";
 
-  const resp = await fetch("/api/graph");
+  let resp;
+  try {
+    resp = await fetch("/api/graph");
+  } catch (err) {
+    status.textContent = `Connection error: ${err.message}`;
+    return;
+  }
+
   if (!resp.ok) {
-    status.textContent = "Failed to load graph";
+    let detail = "";
+    try { detail = (await resp.json()).error ?? ""; } catch {}
+    status.textContent = `Failed to load graph: ${detail || resp.statusText}`;
     return;
   }
 
   const data = await resp.json();
+
+  if (data.nodes.length === 0) {
+    status.textContent = "No graph data — run `code-graph-rag index` first, then refresh.";
+    return;
+  }
+
   status.textContent = `${data.nodes.length} nodes, ${data.edges.length} edges`;
 
   const nodes = new vis.DataSet(

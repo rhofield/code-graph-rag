@@ -1,6 +1,7 @@
 import type { DbConnection } from "../db/connection.js";
 import type { GraphEntities, ExtractedFunction, ExtractedClass, ExtractedCall } from "./extractor.js";
 import type { FileMetadata } from "./graph-writer.js";
+import { Semaphore } from "./parallel-pipeline.js";
 import {
   batchDeleteFileChildren,
   batchUpsertFiles,
@@ -10,21 +11,38 @@ import {
   batchUpsertCallRelationships,
 } from "../db/queries.js";
 
+interface FlushSnapshot {
+  fileMetas: FileMetadata[];
+  functions: ExtractedFunction[];
+  classes: ExtractedClass[];
+  calls: ExtractedCall[];
+}
+
 export class BatchGraphWriter {
   private fileMetas: FileMetadata[] = [];
   private allFunctions: ExtractedFunction[] = [];
   private allClasses: ExtractedClass[] = [];
   private allCalls: ExtractedCall[] = [];
   private _estimatedMemoryBytes = 0;
-  private _pendingFlush: Promise<void> | null = null;
+  private _flushSem = new Semaphore(1);
+  private _inFlight = new Set<Promise<void>>();
   private _flushError: Error | null = null;
   private readonly batchSize: number;
+  private _flushesScheduled = 0;
+  private _flushesCompleted = 0;
+  onFlushProgress?: (completed: number, total: number) => void;
 
   constructor(private readonly db: DbConnection, options: { batchSize?: number } = {}) {
-    this.batchSize = options.batchSize ?? 50;
+    this.batchSize = options.batchSize ?? 200;
   }
 
   add(entities: GraphEntities, meta: FileMetadata): void {
+    if (this._flushError) {
+      const err = this._flushError;
+      this._flushError = null;
+      throw err;
+    }
+
     this.fileMetas.push(meta);
 
     const validFunctions = entities.functions.filter((fn) => fn.name !== "");
@@ -34,49 +52,69 @@ export class BatchGraphWriter {
     this.allClasses.push(...validClasses);
     this.allCalls.push(...entities.calls);
 
-    // Memory estimate: sum of snippet lengths as proxy
     for (const fn of validFunctions) {
       this._estimatedMemoryBytes += fn.snippet.length;
     }
 
     if (this.fileMetas.length >= this.batchSize) {
-      this._pendingFlush = this.flush().catch((err) => {
-        this._flushError = err instanceof Error ? err : new Error(String(err));
-      });
+      this._scheduleFlush(this._snapshot());
     }
   }
 
-  async flush(): Promise<void> {
-    if (this._flushError) {
-      const err = this._flushError;
-      this._flushError = null;
-      throw err;
-    }
-
-    if (this.fileMetas.length === 0) return;
-
-    const fileMetas = this.fileMetas;
-    const allFunctions = this.allFunctions;
-    const allClasses = this.allClasses;
-    const allCalls = this.allCalls;
-
-    // Reset state before async work so new adds during flush go into fresh state
+  private _snapshot(): FlushSnapshot {
+    const snapshot: FlushSnapshot = {
+      fileMetas: this.fileMetas,
+      functions: this.allFunctions,
+      classes: this.allClasses,
+      calls: this.allCalls,
+    };
     this.fileMetas = [];
     this.allFunctions = [];
     this.allClasses = [];
     this.allCalls = [];
     this._estimatedMemoryBytes = 0;
-    this._pendingFlush = null;
+    return snapshot;
+  }
+
+  private _scheduleFlush(snapshot: FlushSnapshot): void {
+    if (snapshot.fileMetas.length === 0) return;
+
+    this._flushesScheduled++;
+    const p = this._runFlush(snapshot)
+      .then(() => {
+        this._flushesCompleted++;
+        this.onFlushProgress?.(this._flushesCompleted, this._flushesScheduled);
+      })
+      .catch((err) => {
+        this._flushesCompleted++;
+        this._flushError = err instanceof Error ? err : new Error(String(err));
+      });
+    this._inFlight.add(p);
+    p.finally(() => this._inFlight.delete(p));
+  }
+
+  get flushesScheduled(): number { return this._flushesScheduled; }
+  get flushesCompleted(): number { return this._flushesCompleted; }
+
+  private async _runFlush(snapshot: FlushSnapshot): Promise<void> {
+    const release = await this._flushSem.acquire();
+    try {
+      await this._doFlush(snapshot);
+    } finally {
+      release();
+    }
+  }
+
+  private async _doFlush(snapshot: FlushSnapshot): Promise<void> {
+    const { fileMetas, functions: allFunctions, classes: allClasses, calls: allCalls } = snapshot;
 
     const session = this.db.session();
     const tx = session.beginTransaction();
     try {
-      // 1. Delete old children for all files
       const filePaths = fileMetas.map((m) => m.filePath);
       const deleteQ = batchDeleteFileChildren(filePaths);
       await tx.run(deleteQ.cypher, deleteQ.params);
 
-      // 2. Upsert files
       const fileItems = fileMetas.map((m) => ({
         path: m.filePath,
         relativePath: m.relativePath,
@@ -88,7 +126,6 @@ export class BatchGraphWriter {
       const filesQ = batchUpsertFiles(fileItems);
       await tx.run(filesQ.cypher, filesQ.params);
 
-      // 3. Upsert classes
       if (allClasses.length > 0) {
         const classItems = allClasses.map((c) => ({
           name: c.name,
@@ -101,7 +138,6 @@ export class BatchGraphWriter {
         await tx.run(classesQ.cypher, classesQ.params);
       }
 
-      // 4. Upsert top-level functions (className === null)
       const topLevelFns = allFunctions.filter((fn) => fn.className === null);
       if (topLevelFns.length > 0) {
         const fnItems = topLevelFns.map((fn) => ({
@@ -118,7 +154,6 @@ export class BatchGraphWriter {
         await tx.run(fnsQ.cypher, fnsQ.params);
       }
 
-      // 5. Upsert methods (className !== null)
       const methods = allFunctions.filter((fn) => fn.className !== null);
       if (methods.length > 0) {
         const methodItems = methods.map((fn) => ({
@@ -135,7 +170,6 @@ export class BatchGraphWriter {
         await tx.run(methodsQ.cypher, methodsQ.params);
       }
 
-      // 6. Upsert call relationships
       if (allCalls.length > 0) {
         const callsQ = batchUpsertCallRelationships(allCalls);
         await tx.run(callsQ.cypher, callsQ.params);
@@ -150,9 +184,34 @@ export class BatchGraphWriter {
     }
   }
 
+  async flush(): Promise<void> {
+    if (this._flushError) {
+      const err = this._flushError;
+      this._flushError = null;
+      throw err;
+    }
+
+    // Flush any remaining buffered files
+    if (this.fileMetas.length > 0) {
+      this._scheduleFlush(this._snapshot());
+    }
+
+    // Drain all in-flight flushes
+    while (this._inFlight.size > 0) {
+      await Promise.all([...this._inFlight]);
+    }
+
+    if (this._flushError) {
+      const err = this._flushError;
+      this._flushError = null;
+      throw err;
+    }
+  }
+
+  // kept for API compatibility — flush() now drains everything
   async waitForPendingFlush(): Promise<void> {
-    if (this._pendingFlush) {
-      await this._pendingFlush;
+    while (this._inFlight.size > 0) {
+      await Promise.all([...this._inFlight]);
     }
   }
 

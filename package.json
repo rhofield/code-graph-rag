@@ -8,7 +8,7 @@
     "code-graph-rag": "./bin/code-graph-rag.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/indexer/language-map.json dist/indexer/language-map.json && cp -r src/visualize/public dist/visualize/",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",

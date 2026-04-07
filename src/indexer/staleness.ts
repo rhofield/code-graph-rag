@@ -34,6 +34,7 @@ export function isFileStale(
 export interface GitDiffResult {
   changed: string[];
   deleted: string[];
+  error?: boolean;  // true if git command failed
 }
 
 export function getChangedFilesSinceCommit(
@@ -44,19 +45,23 @@ export function getChangedFilesSinceCommit(
   const base = baseSha ?? "HEAD~1";
   try {
     if (options?.includeDeleted) {
-      const addedModified = execFileSync(
+      const output = execFileSync(
         "git",
-        ["diff", "--name-only", "--diff-filter=ACM", `${base}..HEAD`],
+        ["diff", "--name-status", `${base}..HEAD`],
         { cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      ).trim().split("\n").filter((f: string) => f.length > 0);
-
-      const deleted = execFileSync(
-        "git",
-        ["diff", "--name-only", "--diff-filter=D", `${base}..HEAD`],
-        { cwd: repoPath, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      ).trim().split("\n").filter((f: string) => f.length > 0);
-
-      return { changed: addedModified, deleted };
+      );
+      const changed: string[] = [];
+      const deleted: string[] = [];
+      for (const line of output.trim().split("\n").filter((l) => l.length > 0)) {
+        const [status, ...rest] = line.split("\t");
+        const filePath = rest.join("\t"); // handles paths with tabs (rare)
+        if (status === "D") {
+          deleted.push(filePath);
+        } else {
+          changed.push(filePath);
+        }
+      }
+      return { changed, deleted };
     }
 
     const result = execFileSync(
@@ -67,7 +72,7 @@ export function getChangedFilesSinceCommit(
 
     return { changed: result, deleted: [] };
   } catch {
-    return { changed: [], deleted: [] };
+    return { changed: [], deleted: [], error: true };
   }
 }
 

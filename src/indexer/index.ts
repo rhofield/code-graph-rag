@@ -74,17 +74,21 @@ export async function indexRepository(
       if (lastCommit) {
         const diff = getChangedFilesSinceCommit(absRoot, lastCommit, { includeDeleted: true });
 
-        // Remove deleted files from the index
-        for (const relPath of diff.deleted) {
-          const absPath = resolve(absRoot, relPath);
-          const deleteQ = deleteFileAndRelationships({ filePath: absPath });
-          await session.run(deleteQ.cypher, deleteQ.params);
-        }
+        if (diff.error) {
+          // Git failed (invalid SHA, shallow clone, etc.) — fall through to hash/mtime
+        } else {
+          // Remove deleted files from the index
+          for (const relPath of diff.deleted) {
+            const absPath = resolve(absRoot, relPath);
+            const deleteQ = deleteFileAndRelationships({ filePath: absPath });
+            await session.run(deleteQ.cypher, deleteQ.params);  // let errors propagate
+          }
 
-        // Filter files to only changed ones
-        const changedAbsPaths = new Set(diff.changed.map((f) => resolve(absRoot, f)));
-        files = files.filter((f) => changedAbsPaths.has(f));
-        usedGitBased = true;
+          // Filter files to only changed ones
+          const changedAbsPaths = new Set(diff.changed.map((f) => resolve(absRoot, f)));
+          files = files.filter((f) => changedAbsPaths.has(f));
+          usedGitBased = true;
+        }
       }
     } finally {
       await session.close();
@@ -164,18 +168,20 @@ export async function indexRepository(
   await batchWriter.waitForPendingFlush();
   await batchWriter.flush();
 
-  const commitSha = getCurrentCommitSha(absRoot);
-  if (commitSha) {
-    const session = db.session();
-    try {
-      const q = upsertRepositoryWithCommit({
-        path: absRoot,
-        name: absRoot.split("/").pop() || absRoot,
-        lastIndexedCommit: commitSha,
-      });
-      await session.run(q.cypher, q.params);
-    } finally {
-      await session.close();
+  if (result.errors.length === 0) {
+    const commitSha = getCurrentCommitSha(absRoot);
+    if (commitSha) {
+      const session = db.session();
+      try {
+        const q = upsertRepositoryWithCommit({
+          path: absRoot,
+          name: absRoot.split("/").pop() || absRoot,
+          lastIndexedCommit: commitSha,
+        });
+        await session.run(q.cypher, q.params);
+      } finally {
+        await session.close();
+      }
     }
   }
 

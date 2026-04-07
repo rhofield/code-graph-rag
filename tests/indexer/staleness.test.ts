@@ -73,7 +73,9 @@ describe("staleness detection", () => {
   describe("getChangedFilesSinceCommit", () => {
     it("accepts a base commit SHA parameter", () => {
       const result = getChangedFilesSinceCommit("/nonexistent-repo", "abc123");
-      expect(result).toEqual({ changed: [], deleted: [] });
+      expect(result.changed).toEqual([]);
+      expect(result.deleted).toEqual([]);
+      // error: true is fine here
     });
 
     it("returns GitDiffResult shape with includeDeleted option", () => {
@@ -84,6 +86,14 @@ describe("staleness detection", () => {
       expect(result).toHaveProperty("deleted");
       expect(Array.isArray(result.changed)).toBe(true);
       expect(Array.isArray(result.deleted)).toBe(true);
+    });
+
+    it("returns error:true when git command fails", () => {
+      const result = getChangedFilesSinceCommit("/nonexistent-repo", "abc123");
+      // /nonexistent-repo is not a git repo, so git fails
+      expect(result.error).toBe(true);
+      expect(result.changed).toEqual([]);
+      expect(result.deleted).toEqual([]);
     });
   });
 

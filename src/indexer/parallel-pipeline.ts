@@ -55,13 +55,13 @@ export async function runParallelPipeline(options: PipelineOptions): Promise<Pip
   let progressCounter = 0;
 
   const tasks = files.map((file) => async () => {
+    // Backpressure: flush BEFORE acquiring slot — fatal errors propagate out
+    while (batchWriter.estimatedMemoryBytes >= maxMemoryBytes) {
+      await batchWriter.flush();
+    }
+
     const release = await sem.acquire();
     try {
-      // Backpressure: wait for flush if memory limit exceeded
-      while (batchWriter.estimatedMemoryBytes >= maxMemoryBytes) {
-        await batchWriter.flush();
-      }
-
       const parseResult = await parseFn(file);
       progressCounter++;
       onProgress?.(progressCounter, files.length, file);

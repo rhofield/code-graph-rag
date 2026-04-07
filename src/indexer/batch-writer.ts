@@ -17,6 +17,7 @@ export class BatchGraphWriter {
   private allCalls: ExtractedCall[] = [];
   private _estimatedMemoryBytes = 0;
   private _pendingFlush: Promise<void> | null = null;
+  private _flushError: Error | null = null;
   private readonly batchSize: number;
 
   constructor(private readonly db: DbConnection, options: { batchSize?: number } = {}) {
@@ -39,11 +40,19 @@ export class BatchGraphWriter {
     }
 
     if (this.fileMetas.length >= this.batchSize) {
-      this._pendingFlush = this.flush();
+      this._pendingFlush = this.flush().catch((err) => {
+        this._flushError = err instanceof Error ? err : new Error(String(err));
+      });
     }
   }
 
   async flush(): Promise<void> {
+    if (this._flushError) {
+      const err = this._flushError;
+      this._flushError = null;
+      throw err;
+    }
+
     if (this.fileMetas.length === 0) return;
 
     const fileMetas = this.fileMetas;
@@ -60,11 +69,12 @@ export class BatchGraphWriter {
     this._pendingFlush = null;
 
     const session = this.db.session();
+    const tx = session.beginTransaction();
     try {
       // 1. Delete old children for all files
       const filePaths = fileMetas.map((m) => m.filePath);
       const deleteQ = batchDeleteFileChildren(filePaths);
-      await session.run(deleteQ.cypher, deleteQ.params);
+      await tx.run(deleteQ.cypher, deleteQ.params);
 
       // 2. Upsert files
       const fileItems = fileMetas.map((m) => ({
@@ -76,7 +86,7 @@ export class BatchGraphWriter {
         lastModified: m.lastModified,
       }));
       const filesQ = batchUpsertFiles(fileItems);
-      await session.run(filesQ.cypher, filesQ.params);
+      await tx.run(filesQ.cypher, filesQ.params);
 
       // 3. Upsert classes
       if (allClasses.length > 0) {
@@ -88,7 +98,7 @@ export class BatchGraphWriter {
           docstring: c.docstring,
         }));
         const classesQ = batchUpsertClasses(classItems);
-        await session.run(classesQ.cypher, classesQ.params);
+        await tx.run(classesQ.cypher, classesQ.params);
       }
 
       // 4. Upsert top-level functions (className === null)
@@ -105,7 +115,7 @@ export class BatchGraphWriter {
           className: null as string | null,
         }));
         const fnsQ = batchUpsertFunctions(fnItems);
-        await session.run(fnsQ.cypher, fnsQ.params);
+        await tx.run(fnsQ.cypher, fnsQ.params);
       }
 
       // 5. Upsert methods (className !== null)
@@ -122,14 +132,19 @@ export class BatchGraphWriter {
           className: fn.className as string,
         }));
         const methodsQ = batchUpsertMethods(methodItems);
-        await session.run(methodsQ.cypher, methodsQ.params);
+        await tx.run(methodsQ.cypher, methodsQ.params);
       }
 
       // 6. Upsert call relationships
       if (allCalls.length > 0) {
         const callsQ = batchUpsertCallRelationships(allCalls);
-        await session.run(callsQ.cypher, callsQ.params);
+        await tx.run(callsQ.cypher, callsQ.params);
       }
+
+      await tx.commit();
+    } catch (err) {
+      await tx.rollback();
+      throw err;
     } finally {
       await session.close();
     }

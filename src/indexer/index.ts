@@ -130,6 +130,7 @@ export async function indexRepository(
     }
   }
 
+  await batchWriter.waitForPendingFlush();
   await batchWriter.flush();
 
   return result;

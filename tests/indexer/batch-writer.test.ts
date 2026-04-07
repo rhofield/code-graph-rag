@@ -5,7 +5,12 @@ import type { FileMetadata } from "../../src/indexer/graph-writer.js";
 
 const mockRun = vi.fn().mockResolvedValue({ records: [] });
 const mockClose = vi.fn().mockResolvedValue(undefined);
-const mockSession = { run: mockRun, close: mockClose };
+const mockTx = {
+  run: mockRun,
+  commit: vi.fn().mockResolvedValue(undefined),
+  rollback: vi.fn().mockResolvedValue(undefined),
+};
+const mockSession = { beginTransaction: () => mockTx, close: mockClose };
 const mockDb = {
   driver: {},
   session: () => mockSession,
@@ -37,6 +42,8 @@ describe("BatchGraphWriter", () => {
   beforeEach(() => {
     mockRun.mockClear();
     mockClose.mockClear();
+    mockTx.commit.mockClear();
+    mockTx.rollback.mockClear();
   });
 
   it("does not write to Neo4j before flush is called", () => {
@@ -104,5 +111,19 @@ describe("BatchGraphWriter", () => {
     await writer.flush();
     expect(writer.pendingFileCount).toBe(0);
     expect(writer.estimatedMemoryBytes).toBe(0);
+  });
+
+  it("propagates auto-flush errors to the next flush()", async () => {
+    const failRun = vi.fn().mockRejectedValue(new Error("DB connection failed"));
+    const failTx = { run: failRun, commit: vi.fn().mockResolvedValue(undefined), rollback: vi.fn().mockResolvedValue(undefined) };
+    const failSession = { beginTransaction: () => failTx, close: vi.fn().mockResolvedValue(undefined) };
+    const failDb = { driver: {}, session: () => failSession, healthCheck: vi.fn(), close: vi.fn() };
+
+    const writer = new BatchGraphWriter(failDb as any, { batchSize: 2 });
+    writer.add(makeEntities("/p/a.ts"), makeMeta("/p/a.ts"));
+    writer.add(makeEntities("/p/b.ts"), makeMeta("/p/b.ts")); // triggers auto-flush
+    await writer.waitForPendingFlush(); // let the auto-flush reject
+
+    await expect(writer.flush()).rejects.toThrow("DB connection failed");
   });
 });

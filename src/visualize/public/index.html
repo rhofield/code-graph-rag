@@ -11,6 +11,27 @@
     #header { padding: 12px 16px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 14px; }
     #header h1 { font-size: 16px; color: #58a6ff; }
     #main { display: flex; flex: 1; overflow: hidden; }
+
+    #sidebar { width: 240px; background: #161b22; border-right: 1px solid #30363d; padding: 16px; overflow-y: auto; font-size: 12px; }
+    #sidebar h3 { font-size: 11px; color: #58a6ff; margin-bottom: 6px; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+    #sidebar h3:first-child { margin-top: 0; }
+    #sidebar input[type="text"] {
+      width: 100%; padding: 6px 8px; background: #0d1117; color: #c9d1d9;
+      border: 1px solid #30363d; border-radius: 4px; font-family: inherit; font-size: 12px;
+    }
+    #sidebar label { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; }
+    #sidebar label input { cursor: pointer; }
+    #sidebar .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    #sidebar .legend-swatch { width: 10px; height: 10px; border-radius: 50%; }
+    #sidebar button {
+      width: 100%; padding: 6px 8px; margin-top: 4px;
+      background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px;
+      font-family: inherit; font-size: 12px; cursor: pointer;
+    }
+    #sidebar button:hover { background: #30363d; }
+    #sidebar #search-result { color: #8b949e; font-size: 11px; margin-top: 4px; min-height: 14px; }
+    #sidebar #loaded-counter { color: #8b949e; margin-top: 12px; font-size: 11px; }
+
     #graph { flex: 1; }
     #panel { width: 300px; background: #161b22; border-left: 1px solid #30363d; padding: 16px; overflow-y: auto; font-size: 12px; }
     #panel h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
@@ -24,6 +45,37 @@
     <span id="status">Loading graph...</span>
   </div>
   <div id="main">
+    <div id="sidebar">
+      <h3>Search</h3>
+      <input id="search-input" type="text" placeholder="function or class name…" autocomplete="off">
+      <div id="search-result"></div>
+
+      <h3>Show node types</h3>
+      <label><input type="checkbox" data-node-type="Repository" checked> Repository</label>
+      <label><input type="checkbox" data-node-type="File" checked> File</label>
+      <label><input type="checkbox" data-node-type="Class" checked> Class</label>
+      <label><input type="checkbox" data-node-type="Function" checked> Function</label>
+
+      <h3>Show edge types</h3>
+      <label><input type="checkbox" data-edge-type="CONTAINS_FILE" checked> CONTAINS_FILE</label>
+      <label><input type="checkbox" data-edge-type="CONTAINS" checked> CONTAINS</label>
+      <label><input type="checkbox" data-edge-type="HAS_METHOD" checked> HAS_METHOD</label>
+      <label><input type="checkbox" data-edge-type="IMPORTS" checked> IMPORTS</label>
+      <label><input type="checkbox" data-edge-type="CALLS" checked> CALLS</label>
+      <label><input type="checkbox" data-edge-type="IMPORTS_SYMBOL"> IMPORTS_SYMBOL</label>
+
+      <h3>Legend</h3>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1f6feb"></span> Repository</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#1a7f37"></span> File</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#8957e5"></span> Class</div>
+      <div class="legend-row"><span class="legend-swatch" style="background:#da3633"></span> Function</div>
+
+      <button id="freeze-btn">Freeze layout</button>
+      <button id="reset-view-btn">Reset view filters</button>
+      <button id="reset-all-btn">Reset everything</button>
+      <div id="loaded-counter">Loaded: 0 nodes, 0 edges</div>
+    </div>
+
     <div id="graph"></div>
     <div id="panel">
       <h2>Details</h2>

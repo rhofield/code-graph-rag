@@ -24,3 +24,17 @@ export function repoOverview(repoName?: string): CypherQuery {
     params: { repoName: repoName ?? null, limit: INITIAL_LIMIT },
   };
 }
+
+export function filterByFile(relativePath: string): CypherQuery {
+  return {
+    cypher: `
+      MATCH (f:File {relativePath: $relativePath})
+      OPTIONAL MATCH (f)-[contains:CONTAINS]->(sym)
+      WHERE sym:Function OR sym:Class
+      OPTIONAL MATCH (sym)-[hasMethod:HAS_METHOD]->(method:Function)
+      RETURN f, contains, sym, hasMethod, method
+      LIMIT $limit
+    `,
+    params: { relativePath, limit: INITIAL_LIMIT },
+  };
+}

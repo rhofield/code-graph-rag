@@ -153,10 +153,11 @@ Agent: get_dependencies("src/auth/middleware.ts")
 | Relationship | Meaning |
 |---|---|
 | `(Repository)-[:CONTAINS_FILE]->(File)` | Repo owns file |
-| `(File)-[:DEFINES]->(Function\|Class)` | File contains definition |
+| `(File)-[:CONTAINS]->(Function\|Class)` | File contains top-level definition |
+| `(Class)-[:HAS_METHOD]->(Function)` | Class method |
 | `(Function)-[:CALLS]->(Function)` | Call edge |
 | `(File)-[:IMPORTS]->(File)` | Import edge |
-| `(Class)-[:CONTAINS]->(Function)` | Method membership |
+| `(File)-[:IMPORTS_SYMBOL]->(Function\|Class)` | Symbol-level import |
 
 **Indexes**
 

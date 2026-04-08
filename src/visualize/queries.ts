@@ -19,7 +19,7 @@ export function repoOverview(repoName?: string): CypherQuery {
       OPTIONAL MATCH (f)-[imp:IMPORTS]->(other:File)
       WHERE (r)-[:CONTAINS_FILE]->(other)
       RETURN r, contains, f, imp, other
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { repoName: repoName ?? null, limit: INITIAL_LIMIT },
   };
@@ -33,7 +33,7 @@ export function filterByFile(relativePath: string): CypherQuery {
       WHERE sym:Function OR sym:Class
       OPTIONAL MATCH (sym)-[hasMethod:HAS_METHOD]->(method:Function)
       RETURN f, contains, sym, hasMethod, method
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { relativePath, limit: INITIAL_LIMIT },
   };
@@ -47,7 +47,7 @@ export function filterByFunction(name: string): CypherQuery {
       OPTIONAL MATCH (fn)-[outCall:CALLS]->(callee:Function)
       OPTIONAL MATCH (caller:Function)-[inCall:CALLS]->(fn)
       RETURN fn, file, contains, outCall, callee, inCall, caller
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { name, limit: INITIAL_LIMIT },
   };
@@ -61,7 +61,7 @@ export function expandFile(filePath: string): CypherQuery {
       WHERE sym:Function OR sym:Class
       OPTIONAL MATCH (sym)-[hasMethod:HAS_METHOD]->(method:Function)
       RETURN f, contains, sym, hasMethod, method
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { filePath, limit: EXPAND_FILE_LIMIT },
   };
@@ -74,7 +74,7 @@ export function expandFunction(name: string, filePath: string): CypherQuery {
       OPTIONAL MATCH (fn)-[outCall:CALLS]->(callee:Function)
       OPTIONAL MATCH (caller:Function)-[inCall:CALLS]->(fn)
       RETURN fn, outCall, callee, inCall, caller
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { name, filePath, limit: EXPAND_FUNCTION_LIMIT },
   };
@@ -88,7 +88,7 @@ export function searchByName(prefix: string): CypherQuery {
       WHERE node:Function OR node:Class
       RETURN node
       ORDER BY score DESC
-      LIMIT $limit
+      LIMIT toInteger($limit)
     `,
     params: { q: `${prefix}*`, limit: SEARCH_LIMIT },
   };

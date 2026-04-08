@@ -236,6 +236,21 @@ export function batchUpsertClasses(items: Array<{
   };
 }
 
+export function batchUpsertImportRelationships(items: Array<{
+  sourceFilePath: string;
+  targetFilePath: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (source:File {path: item.sourceFilePath})
+      MATCH (target:File {path: item.targetFilePath})
+      MERGE (source)-[:IMPORTS]->(target)
+    `,
+    params: { items },
+  };
+}
+
 export function batchUpsertCallRelationships(items: Array<{
   callerName: string; callerFilePath: string; calleeName: string;
 }>): CypherQuery {

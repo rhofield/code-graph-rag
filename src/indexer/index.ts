@@ -161,6 +161,9 @@ export async function indexRepository(
   // Filter to supported languages
   files = files.filter((f) => detectLanguage(f) !== null);
 
+  // Build the full set of discovered file paths for import resolution
+  const filePathSet = new Set(files);
+
   // If changedOnly, check staleness against existing graph
   if (options.changedOnly) {
     // Try git-based incremental first
@@ -238,7 +241,7 @@ export async function indexRepository(
   const maxMemoryBytes = (options.maxMemoryMB ?? 8192) * 1024 * 1024;
 
   if (concurrency > 1) {
-    const batchWriter = new BatchGraphWriter(db, {});
+    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     const pipelineResult = await runParallelPipeline({
       files,
       absRoot,
@@ -258,7 +261,7 @@ export async function indexRepository(
     result.errors = pipelineResult.errors;
   } else {
     // Sequential fallback
-    const batchWriter = new BatchGraphWriter(db, {});
+    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       options.onProgress?.(i + 1, files.length, file);

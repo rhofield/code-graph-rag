@@ -1,7 +1,7 @@
 // tests/visualize/queries.test.ts
 import { describe, it, expect } from "vitest";
 import { INITIAL_LIMIT, EXPAND_FILE_LIMIT, EXPAND_FUNCTION_LIMIT, SEARCH_LIMIT } from "../../src/visualize/queries.js";
-import { repoOverview, filterByFile, filterByFunction, expandFile, expandFunction } from "../../src/visualize/queries.js";
+import { repoOverview, filterByFile, filterByFunction, expandFile, expandFunction, searchByName } from "../../src/visualize/queries.js";
 
 describe("visualize/queries — limits", () => {
   it("exports limit constants", () => {
@@ -77,5 +77,19 @@ describe("expandFunction", () => {
       filePath: "/abs/repo/src/api.ts",
       limit: EXPAND_FUNCTION_LIMIT,
     });
+  });
+});
+
+describe("searchByName", () => {
+  it("uses the code_search full-text index and respects limit", () => {
+    const { cypher, params } = searchByName("handle");
+    expect(cypher).toContain("CALL db.index.fulltext.queryNodes('code_search'");
+    expect(cypher).toContain("LIMIT");
+    expect(params).toEqual({ q: "handle*", limit: SEARCH_LIMIT });
+  });
+
+  it("appends '*' to the query to enable prefix matching", () => {
+    const { params } = searchByName("foo");
+    expect(params.q).toBe("foo*");
   });
 });

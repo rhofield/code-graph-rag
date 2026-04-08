@@ -269,6 +269,9 @@ async function boot() {
   const status = document.getElementById("status");
   status.textContent = "Fetching graph data...";
 
+  initNetwork();
+  bindSidebarEvents();
+
   let data;
   try {
     data = await fetchGraph(parseUrlFilters());
@@ -282,8 +285,6 @@ async function boot() {
     return;
   }
 
-  initNetwork();
-  bindSidebarEvents();
   mergeIntoLoaded(data);
   applyViewFilters();
   status.textContent = `${loadedSet.nodes.length} nodes, ${loadedSet.edges.length} edges`;

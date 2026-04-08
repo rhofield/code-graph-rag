@@ -227,6 +227,41 @@ function bindSidebarEvents() {
       }
     }, 350);
   });
+
+  document.getElementById("reset-view-btn").addEventListener("click", () => {
+    viewState.search = "";
+    viewState.visibleNodeTypes = new Set(["Repository", "File", "Class", "Function"]);
+    viewState.visibleEdgeTypes = new Set([
+      "CONTAINS_FILE", "CONTAINS", "HAS_METHOD", "IMPORTS", "CALLS",
+    ]);
+    document.getElementById("search-input").value = "";
+    document.getElementById("search-result").textContent = "";
+    document.querySelectorAll('input[data-node-type]').forEach((i) => { i.checked = true; });
+    document.querySelectorAll('input[data-edge-type]').forEach((i) => {
+      i.checked = i.dataset.edgeType !== "IMPORTS_SYMBOL";
+    });
+    applyViewFilters();
+  });
+
+  document.getElementById("reset-all-btn").addEventListener("click", async () => {
+    loadedSet.nodes.clear();
+    loadedSet.edges.clear();
+    edgeIdCounter = 0;
+    try {
+      const data = await fetchGraph(parseUrlFilters());
+      mergeIntoLoaded(data);
+      applyViewFilters();
+    } catch (err) {
+      document.getElementById("status").textContent = err.message;
+    }
+  });
+
+  let physicsEnabled = true;
+  document.getElementById("freeze-btn").addEventListener("click", (e) => {
+    physicsEnabled = !physicsEnabled;
+    network.setOptions({ physics: { enabled: physicsEnabled } });
+    e.target.textContent = physicsEnabled ? "Freeze layout" : "Unfreeze layout";
+  });
 }
 
 // === BOOT ===

@@ -202,6 +202,27 @@ function updateLoadedCounter() {
   }
 }
 
+function degreeToSize(degree) {
+  return Math.min(35, 12 + Math.sqrt(degree) * 4);
+}
+
+function recomputeNodeSizes() {
+  const degree = new Map();
+  loadedSet.edges.forEach((e) => {
+    degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+    degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+  });
+
+  const updates = [];
+  loadedSet.nodes.forEach((n) => {
+    const newSize = degreeToSize(degree.get(n.id) ?? 0);
+    if (n.size !== newSize) {
+      updates.push({ id: n.id, size: newSize });
+    }
+  });
+  if (updates.length) loadedSet.nodes.update(updates);
+}
+
 // === EVENTS ===
 async function onNodeClick(params) {
   if (params.nodes.length === 0) return;
@@ -222,6 +243,7 @@ async function onNodeClick(params) {
     try {
       const data = await fetchExpand("file", { filePath: node._properties.path });
       mergeIntoLoaded(data, nodeId);
+      recomputeNodeSizes();
       // Mark file as expanded
       loadedSet.nodes.update({ id: nodeId, _expanded: true });
       applyViewFilters();
@@ -238,6 +260,7 @@ async function onNodeClick(params) {
         filePath: node._properties.filePath,
       });
       mergeIntoLoaded(data, nodeId);
+      recomputeNodeSizes();
       loadedSet.nodes.update({ id: nodeId, _expanded: true });
       applyViewFilters();
     } catch (err) {
@@ -278,6 +301,7 @@ function onNodeDoubleClick(params) {
 
     loadedSet.edges.remove(edgeIds);
     loadedSet.nodes.remove(removeIds);
+    recomputeNodeSizes();
   }
 
   loadedSet.nodes.update({ id: nodeId, _expanded: false });
@@ -335,6 +359,7 @@ function bindSidebarEvents() {
         const data = await fetchSearch(viewState.search.trim());
         if (data.nodes && data.nodes.length > 0) {
           mergeIntoLoaded(data);
+          recomputeNodeSizes();
           applyViewFilters();
           searchResult.textContent = `${localHits} local + ${data.nodes.length} server match${data.nodes.length === 1 ? "" : "es"}`;
         } else if (localHits === 0) {
@@ -368,6 +393,7 @@ function bindSidebarEvents() {
     try {
       const data = await fetchGraph(parseUrlFilters());
       mergeIntoLoaded(data);
+      recomputeNodeSizes();
       applyViewFilters();
     } catch (err) {
       document.getElementById("status").textContent = err.message;
@@ -404,6 +430,7 @@ async function boot() {
   }
 
   mergeIntoLoaded(data);
+  recomputeNodeSizes();
   applyViewFilters();
   status.textContent = `${loadedSet.nodes.length} nodes, ${loadedSet.edges.length} edges`;
 }

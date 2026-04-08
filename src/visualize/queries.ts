@@ -79,3 +79,17 @@ export function expandFunction(name: string, filePath: string): CypherQuery {
     params: { name, filePath, limit: EXPAND_FUNCTION_LIMIT },
   };
 }
+
+export function searchByName(prefix: string): CypherQuery {
+  return {
+    cypher: `
+      CALL db.index.fulltext.queryNodes('code_search', $q) YIELD node, score
+      WITH node, score
+      WHERE node:Function OR node:Class
+      RETURN node
+      ORDER BY score DESC
+      LIMIT $limit
+    `,
+    params: { q: `${prefix}*`, limit: SEARCH_LIMIT },
+  };
+}

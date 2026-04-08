@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG: Config = {
   neo4j: {
     uri: "bolt://localhost:7687",
     username: "neo4j",
-    password: "code-graph-rag",
+    password: "rho-graph",
     managed: true,
   },
   index: {
@@ -99,11 +99,11 @@ function loadJsonFile(filePath: string): Record<string, unknown> | null {
 export function loadConfig(repoRoot: string): Config {
   let config: Config = structuredClone(DEFAULT_CONFIG);
 
-  // Global config: ~/.config/code-graph-rag/config.json
+  // Global config: ~/.config/rho-graph/config.json
   const globalPath = join(
     homedir(),
     ".config",
-    "code-graph-rag",
+    "rho-graph",
     "config.json"
   );
   const globalOverrides = loadJsonFile(globalPath);
@@ -111,8 +111,8 @@ export function loadConfig(repoRoot: string): Config {
     config = deepMerge(config, globalOverrides as Partial<Config>);
   }
 
-  // Repo config: .code-graph-rag.json in repo root
-  const repoPath = join(repoRoot, ".code-graph-rag.json");
+  // Repo config: .rho-graph.json in repo root
+  const repoPath = join(repoRoot, ".rho-graph.json");
   const repoOverrides = loadJsonFile(repoPath);
   if (repoOverrides) {
     config = deepMerge(config, repoOverrides as Partial<Config>);

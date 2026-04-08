@@ -9,8 +9,8 @@ import { join, resolve } from "node:path";
 import ora from "ora";
 
 const HOOK_CONTENT = `#!/bin/sh
-# code-graph-rag: re-index changed files after commit
-code-graph-rag index --changed &
+# rho-graph: re-index changed files after commit
+rho-graph index --changed &
 `;
 
 export async function runInstallHook(): Promise<void> {
@@ -27,7 +27,7 @@ export async function runInstallHook(): Promise<void> {
 
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, "utf-8");
-    if (existing.includes("code-graph-rag")) {
+    if (existing.includes("rho-graph")) {
       spinner.succeed("Hook already installed");
       return;
     }

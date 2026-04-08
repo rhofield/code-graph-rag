@@ -1,11 +1,11 @@
 {
-  "name": "code-graph-rag",
+  "name": "rho-graph",
   "version": "0.1.0",
   "description": "Graph-RAG code indexer for AI agents — token-efficient code search via MCP tools backed by Neo4j",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "code-graph-rag": "./bin/code-graph-rag.js"
+    "rho-graph": "./bin/rho-graph.js"
   },
   "scripts": {
     "build": "tsc && cp src/indexer/language-map.json dist/indexer/language-map.json && cp -r src/visualize/public dist/visualize/",
@@ -13,6 +13,28 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "graph-rag",
+    "code-search",
+    "neo4j",
+    "tree-sitter",
+    "ai",
+    "claude",
+    "cursor",
+    "llm",
+    "code-intelligence"
+  ],
+  "author": "rhofield",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rhofield/rho-graph.git"
+  },
+  "homepage": "https://github.com/rhofield/rho-graph#readme",
+  "bugs": {
+    "url": "https://github.com/rhofield/rho-graph/issues"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

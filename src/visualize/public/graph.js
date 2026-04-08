@@ -432,7 +432,7 @@ async function boot() {
   }
 
   if (data.nodes.length === 0) {
-    status.textContent = "No graph data — run `code-graph-rag index` first, then refresh.";
+    status.textContent = "No graph data — run `rho-graph index` first, then refresh.";
     return;
   }
 

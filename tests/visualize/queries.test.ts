@@ -1,7 +1,7 @@
 // tests/visualize/queries.test.ts
 import { describe, it, expect } from "vitest";
 import { INITIAL_LIMIT, EXPAND_FILE_LIMIT, EXPAND_FUNCTION_LIMIT, SEARCH_LIMIT } from "../../src/visualize/queries.js";
-import { repoOverview, filterByFile, filterByFunction, expandFile } from "../../src/visualize/queries.js";
+import { repoOverview, filterByFile, filterByFunction, expandFile, expandFunction } from "../../src/visualize/queries.js";
 
 describe("visualize/queries — limits", () => {
   it("exports limit constants", () => {
@@ -61,5 +61,21 @@ describe("expandFile", () => {
     expect(cypher).toContain(":CONTAINS");
     expect(cypher).toContain(":HAS_METHOD");
     expect(params).toEqual({ filePath: "/abs/repo/src/api.ts", limit: EXPAND_FILE_LIMIT });
+  });
+});
+
+describe("expandFunction", () => {
+  it("returns 1-hop callers and callees, no further depth", () => {
+    const { cypher, params } = expandFunction("handleRequest", "/abs/repo/src/api.ts");
+    expect(cypher).toContain("MATCH (fn:Function {name: $name, filePath: $filePath})");
+    expect(cypher).toContain("(fn)-[outCall:CALLS]->(callee:Function)");
+    expect(cypher).toContain("(caller:Function)-[inCall:CALLS]->(fn)");
+    // No 2-hop pattern like *2 or chained CALLS
+    expect(cypher).not.toMatch(/CALLS\*[0-9]/);
+    expect(params).toEqual({
+      name: "handleRequest",
+      filePath: "/abs/repo/src/api.ts",
+      limit: EXPAND_FUNCTION_LIMIT,
+    });
   });
 });

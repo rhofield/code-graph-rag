@@ -6,7 +6,9 @@ import {
   upsertFunction,
   upsertClass,
   upsertCallRelationship,
+  upsertImportRelationship,
 } from "../db/queries.js";
+import { resolveImport } from "./import-resolver.js";
 
 export interface FileMetadata {
   filePath: string;
@@ -30,7 +32,8 @@ export async function writeRepoOnce(db: DbConnection, repoPath: string): Promise
 export async function writeGraphEntities(
   db: DbConnection,
   entities: GraphEntities,
-  meta: FileMetadata
+  meta: FileMetadata,
+  filePathSet: Set<string> = new Set()
 ): Promise<void> {
   const session = db.session();
   try {
@@ -86,6 +89,15 @@ export async function writeGraphEntities(
     for (const call of entities.calls) {
       const q = upsertCallRelationship(call);
       await session.run(q.cypher, q.params);
+    }
+
+    // Upsert import relationships
+    for (const imp of entities.imports) {
+      const target = resolveImport(imp.source, meta.filePath, meta.language, filePathSet);
+      if (target) {
+        const q = upsertImportRelationship({ sourceFilePath: meta.filePath, targetFilePath: target });
+        await session.run(q.cypher, q.params);
+      }
     }
   } finally {
     await session.close();

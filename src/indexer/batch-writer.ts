@@ -9,13 +9,16 @@ import {
   batchUpsertFunctions,
   batchUpsertMethods,
   batchUpsertCallRelationships,
+  batchUpsertImportRelationships,
 } from "../db/queries.js";
+import { resolveImport } from "./import-resolver.js";
 
 interface FlushSnapshot {
   fileMetas: FileMetadata[];
   functions: ExtractedFunction[];
   classes: ExtractedClass[];
   calls: ExtractedCall[];
+  imports: Array<{ sourceFilePath: string; targetFilePath: string }>;
 }
 
 export class BatchGraphWriter {
@@ -23,6 +26,7 @@ export class BatchGraphWriter {
   private allFunctions: ExtractedFunction[] = [];
   private allClasses: ExtractedClass[] = [];
   private allCalls: ExtractedCall[] = [];
+  private allImports: Array<{ sourceFilePath: string; targetFilePath: string }> = [];
   private _estimatedMemoryBytes = 0;
   private _flushSem = new Semaphore(1);
   private _inFlight = new Set<Promise<void>>();
@@ -32,9 +36,15 @@ export class BatchGraphWriter {
   private _flushesCompleted = 0;
   onFlushProgress?: (completed: number, total: number) => void;
 
-  constructor(private readonly db: DbConnection, options: { batchSize?: number } = {}) {
+  constructor(
+    private readonly db: DbConnection,
+    options: { batchSize?: number; filePathSet?: Set<string> } = {}
+  ) {
     this.batchSize = options.batchSize ?? 200;
+    this.filePathSet = options.filePathSet ?? new Set();
   }
+
+  private readonly filePathSet: Set<string>;
 
   add(entities: GraphEntities, meta: FileMetadata): void {
     if (this._flushError) {
@@ -52,6 +62,11 @@ export class BatchGraphWriter {
     this.allClasses.push(...validClasses);
     this.allCalls.push(...entities.calls);
 
+    for (const imp of entities.imports) {
+      const target = resolveImport(imp.source, meta.filePath, meta.language, this.filePathSet);
+      if (target) this.allImports.push({ sourceFilePath: meta.filePath, targetFilePath: target });
+    }
+
     for (const fn of validFunctions) {
       this._estimatedMemoryBytes += fn.snippet.length;
     }
@@ -67,11 +82,13 @@ export class BatchGraphWriter {
       functions: this.allFunctions,
       classes: this.allClasses,
       calls: this.allCalls,
+      imports: this.allImports,
     };
     this.fileMetas = [];
     this.allFunctions = [];
     this.allClasses = [];
     this.allCalls = [];
+    this.allImports = [];
     this._estimatedMemoryBytes = 0;
     return snapshot;
   }
@@ -106,7 +123,7 @@ export class BatchGraphWriter {
   }
 
   private async _doFlush(snapshot: FlushSnapshot): Promise<void> {
-    const { fileMetas, functions: allFunctions, classes: allClasses, calls: allCalls } = snapshot;
+    const { fileMetas, functions: allFunctions, classes: allClasses, calls: allCalls, imports: allImports } = snapshot;
 
     const session = this.db.session();
     const tx = session.beginTransaction();
@@ -173,6 +190,11 @@ export class BatchGraphWriter {
       if (allCalls.length > 0) {
         const callsQ = batchUpsertCallRelationships(allCalls);
         await tx.run(callsQ.cypher, callsQ.params);
+      }
+
+      if (allImports.length > 0) {
+        const importsQ = batchUpsertImportRelationships(allImports);
+        await tx.run(importsQ.cypher, importsQ.params);
       }
 
       await tx.commit();

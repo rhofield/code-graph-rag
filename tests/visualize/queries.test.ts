@@ -1,7 +1,7 @@
 // tests/visualize/queries.test.ts
 import { describe, it, expect } from "vitest";
 import { INITIAL_LIMIT, EXPAND_FILE_LIMIT, EXPAND_FUNCTION_LIMIT, SEARCH_LIMIT } from "../../src/visualize/queries.js";
-import { repoOverview } from "../../src/visualize/queries.js";
+import { repoOverview, filterByFile } from "../../src/visualize/queries.js";
 
 describe("visualize/queries — limits", () => {
   it("exports limit constants", () => {
@@ -28,5 +28,17 @@ describe("repoOverview", () => {
     const { cypher, params } = repoOverview("my-service");
     expect(cypher).toContain("$repoName IS NULL OR r.name = $repoName");
     expect(params).toEqual({ repoName: "my-service", limit: 500 });
+  });
+});
+
+describe("filterByFile", () => {
+  it("returns the file + symbols + class methods", () => {
+    const { cypher, params } = filterByFile("src/api.ts");
+    expect(cypher).toContain("MATCH (f:File");
+    expect(cypher).toContain("relativePath: $relativePath");
+    expect(cypher).toContain(":CONTAINS");
+    expect(cypher).toContain(":HAS_METHOD");
+    expect(cypher).toContain("LIMIT");
+    expect(params).toEqual({ relativePath: "src/api.ts", limit: 500 });
   });
 });

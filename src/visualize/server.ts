@@ -99,6 +99,63 @@ async function handleRequest(
     return;
   }
 
+  if (pathname === "/api/expand") {
+    const type = params.get("type");
+    try {
+      let q: CypherQuery;
+      if (type === "file") {
+        const filePath = params.get("filePath");
+        if (!filePath) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "missing filePath" }));
+          return;
+        }
+        q = expandFile(filePath);
+      } else if (type === "function") {
+        const name = params.get("name");
+        const filePath = params.get("filePath");
+        if (!name || !filePath) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "missing name or filePath" }));
+          return;
+        }
+        q = expandFunction(name, filePath);
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `unknown expand type: ${type}` }));
+        return;
+      }
+
+      const data = await runCypher(driver, q);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      console.error("[viz] /api/expand error:", err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  if (pathname === "/api/search") {
+    const q = params.get("q");
+    if (!q) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "missing q" }));
+      return;
+    }
+    try {
+      const data = await runCypher(driver, searchByName(q));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      console.error("[viz] /api/search error:", err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
   // Serve static files
   const publicDir = join(__dirname, "public");
   const filePath = join(publicDir, pathname === "/" ? "index.html" : pathname);

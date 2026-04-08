@@ -66,3 +66,16 @@ export function expandFile(filePath: string): CypherQuery {
     params: { filePath, limit: EXPAND_FILE_LIMIT },
   };
 }
+
+export function expandFunction(name: string, filePath: string): CypherQuery {
+  return {
+    cypher: `
+      MATCH (fn:Function {name: $name, filePath: $filePath})
+      OPTIONAL MATCH (fn)-[outCall:CALLS]->(callee:Function)
+      OPTIONAL MATCH (caller:Function)-[inCall:CALLS]->(fn)
+      RETURN fn, outCall, callee, inCall, caller
+      LIMIT $limit
+    `,
+    params: { name, filePath, limit: EXPAND_FUNCTION_LIMIT },
+  };
+}

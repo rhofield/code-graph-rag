@@ -119,9 +119,25 @@ function initNetwork() {
     container,
     { nodes: loadedSet.nodes, edges: loadedSet.edges },
     {
-      physics: { stabilization: { iterations: 100 } },
-      edges: { smooth: { type: "continuous" } },
-      interaction: { hover: true },
+      physics: {
+        solver: "forceAtlas2Based",
+        forceAtlas2Based: {
+          gravitationalConstant: -50,
+          centralGravity: 0.01,
+          springLength: 150,
+          springConstant: 0.08,
+          damping: 0.4,
+          avoidOverlap: 0.5,
+        },
+        stabilization: { iterations: 250, updateInterval: 25 },
+        minVelocity: 0.5,
+      },
+      edges: {
+        smooth: { type: "continuous", roundness: 0.2 },
+        font: { size: 0, strokeWidth: 0 },
+        arrows: { to: { scaleFactor: 0.6 } },
+      },
+      interaction: { hover: true, hoverConnectedEdges: true },
     }
   );
 

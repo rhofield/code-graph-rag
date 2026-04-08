@@ -97,5 +97,32 @@
     "name_field": "name",
     "body_field": "body",
     "parameters_field": "arguments_definition"
+  },
+  "yaml": {
+    "function": [],
+    "class": [],
+    "import": [],
+    "call": [],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "json": {
+    "function": [],
+    "class": [],
+    "import": [],
+    "call": [],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
+  },
+  "markdown": {
+    "function": [],
+    "class": [],
+    "import": [],
+    "call": [],
+    "name_field": "name",
+    "body_field": "body",
+    "parameters_field": "parameters"
   }
 }

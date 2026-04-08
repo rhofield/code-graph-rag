@@ -21,7 +21,7 @@ export async function startMcpServer(): Promise<void> {
   const db = createConnection(config.neo4j);
 
   const server = new McpServer({
-    name: "code-graph-rag",
+    name: "rho-graph",
     version: "0.1.0",
   });
 

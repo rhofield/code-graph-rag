@@ -50,5 +50,5 @@ export async function checkStaleness(
 }
 
 export function formatStalenessWarning(staleCount: number): string {
-  return `Warning: Index is stale for ${staleCount} files. Run \`code-graph-rag index --changed\` for full refresh.`;
+  return `Warning: Index is stale for ${staleCount} files. Run \`rho-graph index --changed\` for full refresh.`;
 }

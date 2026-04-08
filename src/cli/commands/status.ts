@@ -16,7 +16,7 @@ export function registerStatusCommand(program: Command): void {
       const healthy = await db.healthCheck();
       if (!healthy) {
         console.log(
-          "Neo4j is not running. Run `code-graph-rag init` to start it."
+          "Neo4j is not running. Run `rho-graph init` to start it."
         );
         process.exit(1);
       }

@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
-const CONTAINER_NAME = "code-graph-rag-neo4j";
+const CONTAINER_NAME = "rho-graph-neo4j";
 
 function runDocker(...args: string[]): string {
   return execFileSync("docker", args, {

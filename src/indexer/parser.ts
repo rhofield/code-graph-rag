@@ -33,6 +33,7 @@ const EXTENSION_MAP: Record<string, string> = {
   ".gql": "graphql",
   ".html": "html",
   ".css": "css",
+  ".md": "markdown",
   ".yaml": "yaml",
   ".yml": "yaml",
   ".json": "json",

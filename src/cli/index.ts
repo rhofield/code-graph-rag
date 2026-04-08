@@ -12,7 +12,7 @@ import { registerVisualizeCommand } from "./commands/visualize.js";
 const program = new Command();
 
 program
-  .name("code-graph-rag")
+  .name("rho-graph")
   .description(
     "Graph-RAG code indexer — token-efficient code search for AI agents"
   )

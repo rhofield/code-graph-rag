@@ -1,7 +1,7 @@
 // tests/visualize/queries.test.ts
 import { describe, it, expect } from "vitest";
 import { INITIAL_LIMIT, EXPAND_FILE_LIMIT, EXPAND_FUNCTION_LIMIT, SEARCH_LIMIT } from "../../src/visualize/queries.js";
-import { repoOverview, filterByFile, filterByFunction } from "../../src/visualize/queries.js";
+import { repoOverview, filterByFile, filterByFunction, expandFile } from "../../src/visualize/queries.js";
 
 describe("visualize/queries — limits", () => {
   it("exports limit constants", () => {
@@ -51,5 +51,15 @@ describe("filterByFunction", () => {
     expect(cypher).toContain(":CALLS");
     expect(cypher).toContain("LIMIT");
     expect(params).toEqual({ name: "handleRequest", limit: 500 });
+  });
+});
+
+describe("expandFile", () => {
+  it("returns symbols and class methods for a given absolute file path", () => {
+    const { cypher, params } = expandFile("/abs/repo/src/api.ts");
+    expect(cypher).toContain("MATCH (f:File {path: $filePath})");
+    expect(cypher).toContain(":CONTAINS");
+    expect(cypher).toContain(":HAS_METHOD");
+    expect(params).toEqual({ filePath: "/abs/repo/src/api.ts", limit: EXPAND_FILE_LIMIT });
   });
 });

@@ -52,3 +52,17 @@ export function filterByFunction(name: string): CypherQuery {
     params: { name, limit: INITIAL_LIMIT },
   };
 }
+
+export function expandFile(filePath: string): CypherQuery {
+  return {
+    cypher: `
+      MATCH (f:File {path: $filePath})
+      MATCH (f)-[contains:CONTAINS]->(sym)
+      WHERE sym:Function OR sym:Class
+      OPTIONAL MATCH (sym)-[hasMethod:HAS_METHOD]->(method:Function)
+      RETURN f, contains, sym, hasMethod, method
+      LIMIT $limit
+    `,
+    params: { filePath, limit: EXPAND_FILE_LIMIT },
+  };
+}

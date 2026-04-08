@@ -105,8 +105,40 @@ function initNetwork() {
 }
 
 function applyViewFilters() {
-  // Phase 2 placeholder — full implementation arrives in Phase 3.
-  // For now, behavior matches the old code: everything is visible.
+  const nodeUpdates = [];
+  const edgeUpdates = [];
+
+  loadedSet.nodes.forEach((n) => {
+    const hidden = !viewState.visibleNodeTypes.has(n._group);
+    if (n.hidden !== hidden) {
+      nodeUpdates.push({ id: n.id, hidden });
+    }
+  });
+
+  loadedSet.edges.forEach((e) => {
+    const typeHidden = !viewState.visibleEdgeTypes.has(e._type);
+    const fromNode = loadedSet.nodes.get(e.from);
+    const toNode = loadedSet.nodes.get(e.to);
+    const endpointHidden =
+      (fromNode && fromNode.hidden) || (toNode && toNode.hidden);
+    const hidden = typeHidden || !!endpointHidden;
+    if (e.hidden !== hidden) {
+      edgeUpdates.push({ id: e.id, hidden });
+    }
+  });
+
+  if (nodeUpdates.length) loadedSet.nodes.update(nodeUpdates);
+  if (edgeUpdates.length) loadedSet.edges.update(edgeUpdates);
+  updateLoadedCounter();
+}
+
+function updateLoadedCounter() {
+  const visibleNodes = loadedSet.nodes.get({ filter: (n) => !n.hidden }).length;
+  const visibleEdges = loadedSet.edges.get({ filter: (e) => !e.hidden }).length;
+  const el = document.getElementById("loaded-counter");
+  if (el) {
+    el.textContent = `Loaded: ${loadedSet.nodes.length} nodes, ${loadedSet.edges.length} edges (${visibleNodes}/${visibleEdges} visible)`;
+  }
 }
 
 // === EVENTS ===
@@ -118,6 +150,32 @@ function onNodeClick(params) {
     content.style.display = "block";
     content.textContent = `[${node._group}] ${node.label}\n\n${JSON.stringify(node._properties, null, 2)}`;
   }
+}
+
+function bindSidebarEvents() {
+  document.querySelectorAll('input[data-node-type]').forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const t = e.target.dataset.nodeType;
+      if (e.target.checked) {
+        viewState.visibleNodeTypes.add(t);
+      } else {
+        viewState.visibleNodeTypes.delete(t);
+      }
+      applyViewFilters();
+    });
+  });
+
+  document.querySelectorAll('input[data-edge-type]').forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const t = e.target.dataset.edgeType;
+      if (e.target.checked) {
+        viewState.visibleEdgeTypes.add(t);
+      } else {
+        viewState.visibleEdgeTypes.delete(t);
+      }
+      applyViewFilters();
+    });
+  });
 }
 
 // === BOOT ===
@@ -139,6 +197,7 @@ async function boot() {
   }
 
   initNetwork();
+  bindSidebarEvents();
   mergeIntoLoaded(data);
   applyViewFilters();
   status.textContent = `${loadedSet.nodes.length} nodes, ${loadedSet.edges.length} edges`;

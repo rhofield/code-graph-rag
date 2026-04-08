@@ -38,3 +38,17 @@ export function filterByFile(relativePath: string): CypherQuery {
     params: { relativePath, limit: INITIAL_LIMIT },
   };
 }
+
+export function filterByFunction(name: string): CypherQuery {
+  return {
+    cypher: `
+      MATCH (fn:Function {name: $name})
+      OPTIONAL MATCH (file:File)-[contains:CONTAINS]->(fn)
+      OPTIONAL MATCH (fn)-[outCall:CALLS]->(callee:Function)
+      OPTIONAL MATCH (caller:Function)-[inCall:CALLS]->(fn)
+      RETURN fn, file, contains, outCall, callee, inCall, caller
+      LIMIT $limit
+    `,
+    params: { name, limit: INITIAL_LIMIT },
+  };
+}

@@ -107,7 +107,14 @@ function mergeIntoLoaded({ nodes, edges }, expandedFromId) {
       existing._expandedBy.add(expandedFromId);
     }
   }
+  // Build a fingerprint set of existing edges to avoid duplicates
+  const existingEdgeKeys = new Set();
+  loadedSet.edges.forEach((e) => existingEdgeKeys.add(`${e.from}|${e.to}|${e._type}`));
+
   for (const e of edges) {
+    const key = `${e.from}|${e.to}|${e.label}`;
+    if (existingEdgeKeys.has(key)) continue;
+    existingEdgeKeys.add(key);
     const style = EDGE_STYLES[e.label] ?? { color: "#30363d", width: 1 };
     loadedSet.edges.add({
       id: edgeIdCounter++,

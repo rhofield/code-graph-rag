@@ -1,7 +1,7 @@
 // src/visualize/server.ts
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import neo4j, { type Driver } from "neo4j-driver";
@@ -159,6 +159,13 @@ async function handleRequest(
   // Serve static files
   const publicDir = join(__dirname, "public");
   const filePath = join(publicDir, pathname === "/" ? "index.html" : pathname);
+  const resolved = resolve(filePath);
+  const resolvedPublicDir = resolve(publicDir);
+  if (!resolved.startsWith(resolvedPublicDir + "/")) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Forbidden" }));
+    return;
+  }
   console.log(`[viz] serving file: ${filePath}`);
 
   try {

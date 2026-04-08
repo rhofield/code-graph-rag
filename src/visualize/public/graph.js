@@ -16,6 +16,15 @@ const GROUP_COLORS = {
   Function: { background: "#da3633", border: "#f85149" },
 };
 
+const EDGE_STYLES = {
+  CONTAINS_FILE:  { color: "#1f6feb", width: 1 },
+  CONTAINS:       { color: "#1a7f37", width: 1 },
+  HAS_METHOD:     { color: "#8957e5", width: 1 },
+  IMPORTS:        { color: "#d29922", width: 1.5 },
+  CALLS:          { color: "#da3633", width: 1 },
+  IMPORTS_SYMBOL: { color: "#6e7681", width: 1, dashes: true },
+};
+
 const viewState = {
   search: "",
   visibleNodeTypes: new Set(["Repository", "File", "Class", "Function"]),
@@ -99,13 +108,16 @@ function mergeIntoLoaded({ nodes, edges }, expandedFromId) {
     }
   }
   for (const e of edges) {
+    const style = EDGE_STYLES[e.label] ?? { color: "#30363d", width: 1 };
     loadedSet.edges.add({
       id: edgeIdCounter++,
       from: e.from,
       to: e.to,
       label: e.label,
       arrows: "to",
-      color: { color: "#30363d", highlight: "#58a6ff" },
+      color: { color: style.color, highlight: "#58a6ff" },
+      width: style.width,
+      dashes: style.dashes ?? false,
       font: { color: "#8b949e", size: 10 },
       _type: e.label,
     });

@@ -234,6 +234,50 @@ export async function startVisualizationServer(
 }
 
 /**
+ * Test-only variant of startVisualizationServer:
+ *   - returns the Server instance so tests can close it
+ *   - does not call openBrowser
+ *   - throws (does not process.exit) on connection failure
+ */
+export async function startVisualizationServerForTest(
+  opts: VisualizationOptions
+): Promise<import("node:http").Server> {
+  const driver = neo4j.driver(
+    opts.neo4jConfig.uri,
+    neo4j.auth.basic(opts.neo4jConfig.username, opts.neo4jConfig.password),
+    { connectionTimeout: 5000 }
+  );
+
+  const pingSession = driver.session();
+  try {
+    await pingSession.run("RETURN 1", {}, { timeout: 5000 });
+  } finally {
+    await pingSession.close();
+  }
+
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const url = req.url ?? "/";
+    if (url === "/health") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("ok");
+      return;
+    }
+    handleRequest(res, url, driver, opts).catch((err) => {
+      console.error("[viz-test] unhandled error:", err);
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("Internal server error");
+      }
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, "127.0.0.1", () => resolve(server));
+  });
+}
+
+/**
  * Launch the user's browser to `url` without ever blocking the Node event loop.
  *
  * Why this exists: the previous implementation used `execFileSync`, which holds

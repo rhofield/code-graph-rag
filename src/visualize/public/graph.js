@@ -35,6 +35,7 @@ const loadedSet = {
 
 let network = null;
 let edgeIdCounter = 0;
+const pendingExpands = new Set();
 
 // === API ===
 function parseUrlFilters() {
@@ -65,10 +66,22 @@ async function fetchSearch(q) {
   return resp.json();
 }
 
+async function fetchExpand(type, params) {
+  const qs = new URLSearchParams({ type, ...params }).toString();
+  const resp = await fetch(`/api/expand?${qs}`);
+  if (!resp.ok) {
+    let detail = "";
+    try { detail = (await resp.json()).error ?? ""; } catch {}
+    throw new Error(`expand failed: ${detail || resp.statusText}`);
+  }
+  return resp.json();
+}
+
 // === MERGE ===
-function mergeIntoLoaded({ nodes, edges }) {
+function mergeIntoLoaded({ nodes, edges }, expandedFromId) {
   for (const n of nodes) {
-    if (!loadedSet.nodes.get(n.id)) {
+    const existing = loadedSet.nodes.get(n.id);
+    if (!existing) {
       loadedSet.nodes.add({
         id: n.id,
         label: n.label,
@@ -77,7 +90,12 @@ function mergeIntoLoaded({ nodes, edges }) {
         font: { color: "#c9d1d9" },
         _properties: n.properties,
         _group: n.group,
+        _expanded: false,
+        _expandedBy: expandedFromId ? new Set([expandedFromId]) : new Set(),
       });
+    } else if (expandedFromId) {
+      // Mark this node as also reachable from expandedFromId
+      existing._expandedBy.add(expandedFromId);
     }
   }
   for (const e of edges) {
@@ -108,6 +126,7 @@ function initNetwork() {
   );
 
   network.on("click", onNodeClick);
+  network.on("doubleClick", onNodeDoubleClick);
 }
 
 function applyViewFilters() {
@@ -156,14 +175,85 @@ function updateLoadedCounter() {
 }
 
 // === EVENTS ===
-function onNodeClick(params) {
-  if (params.nodes.length > 0) {
-    const node = loadedSet.nodes.get(params.nodes[0]);
-    document.getElementById("panel-hint").style.display = "none";
-    const content = document.getElementById("panel-content");
-    content.style.display = "block";
-    content.textContent = `[${node._group}] ${node.label}\n\n${JSON.stringify(node._properties, null, 2)}`;
+async function onNodeClick(params) {
+  if (params.nodes.length === 0) return;
+  const nodeId = params.nodes[0];
+  const node = loadedSet.nodes.get(nodeId);
+
+  // Always update the detail panel
+  document.getElementById("panel-hint").style.display = "none";
+  const content = document.getElementById("panel-content");
+  content.style.display = "block";
+  content.textContent = `[${node._group}] ${node.label}\n\n${JSON.stringify(node._properties, null, 2)}`;
+
+  // Expand if not already expanded and not already in flight
+  if (node._expanded || pendingExpands.has(nodeId)) return;
+
+  if (node._group === "File") {
+    pendingExpands.add(nodeId);
+    try {
+      const data = await fetchExpand("file", { filePath: node._properties.path });
+      mergeIntoLoaded(data, nodeId);
+      // Mark file as expanded
+      loadedSet.nodes.update({ id: nodeId, _expanded: true });
+      applyViewFilters();
+    } catch (err) {
+      document.getElementById("status").textContent = err.message;
+    } finally {
+      pendingExpands.delete(nodeId);
+    }
+  } else if (node._group === "Function") {
+    pendingExpands.add(nodeId);
+    try {
+      const data = await fetchExpand("function", {
+        name: node._properties.name,
+        filePath: node._properties.filePath,
+      });
+      mergeIntoLoaded(data, nodeId);
+      loadedSet.nodes.update({ id: nodeId, _expanded: true });
+      applyViewFilters();
+    } catch (err) {
+      document.getElementById("status").textContent = err.message;
+    } finally {
+      pendingExpands.delete(nodeId);
+    }
   }
+  // Repository and Class clicks: detail panel only, no expand.
+}
+
+function onNodeDoubleClick(params) {
+  if (params.nodes.length === 0) return;
+  const nodeId = params.nodes[0];
+  const node = loadedSet.nodes.get(nodeId);
+  if (!node || !node._expanded) return;
+
+  // Find every node that was loaded *because of* nodeId
+  const candidatesToRemove = loadedSet.nodes.get({
+    filter: (n) => n._expandedBy && n._expandedBy.has(nodeId),
+  });
+
+  const removeIds = [];
+  for (const cand of candidatesToRemove) {
+    cand._expandedBy.delete(nodeId);
+    if (cand._expandedBy.size === 0) {
+      removeIds.push(cand.id);
+    }
+  }
+
+  if (removeIds.length > 0) {
+    // Remove edges touching removed nodes
+    const removeIdsSet = new Set(removeIds);
+    const edgeIds = loadedSet.edges.get({
+      filter: (e) => removeIdsSet.has(e.from) || removeIdsSet.has(e.to),
+      fields: ["id"],
+    }).map((e) => e.id);
+
+    loadedSet.edges.remove(edgeIds);
+    loadedSet.nodes.remove(removeIds);
+  }
+
+  loadedSet.nodes.update({ id: nodeId, _expanded: false });
+  applyViewFilters();
 }
 
 function bindSidebarEvents() {

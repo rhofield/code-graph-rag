@@ -6,6 +6,15 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import neo4j, { type Driver } from "neo4j-driver";
 import type { Neo4jConfig } from "../config.js";
+import {
+  repoOverview,
+  filterByFile,
+  filterByFunction,
+  expandFile,
+  expandFunction,
+  searchByName,
+  type CypherQuery,
+} from "./queries.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -19,80 +28,80 @@ interface VisualizationOptions {
   };
 }
 
+async function runCypher(driver: Driver, q: CypherQuery): Promise<{ nodes: object[]; edges: object[] }> {
+  const session = driver.session();
+  try {
+    const result = await session.run(q.cypher, q.params, { timeout: 10000 });
+    const nodes = new Map<string, object>();
+    const edges: object[] = [];
+
+    for (const record of result.records) {
+      for (const key of record.keys) {
+        const val = record.get(key);
+        if (val && typeof val === "object" && "identity" in val && "labels" in val) {
+          const id = val.identity.toString();
+          if (!nodes.has(id)) {
+            nodes.set(id, {
+              id,
+              label: val.properties.name || val.properties.relativePath || id,
+              group: val.labels?.[0] ?? "Unknown",
+              properties: val.properties,
+            });
+          }
+        }
+        if (val && typeof val === "object" && "type" in val && "start" in val && "end" in val) {
+          edges.push({
+            from: val.start.toString(),
+            to: val.end.toString(),
+            label: val.type,
+          });
+        }
+      }
+    }
+
+    return { nodes: Array.from(nodes.values()), edges };
+  } finally {
+    await session.close();
+  }
+}
+
+function pickInitialQuery(opts: VisualizationOptions, urlParams: URLSearchParams): CypherQuery {
+  // URL params take precedence over CLI flags so the browser can re-query without restart
+  const file = urlParams.get("file") ?? opts.filter.file;
+  const fn = urlParams.get("function") ?? opts.filter.function;
+  const repo = urlParams.get("repo") ?? opts.filter.repo;
+
+  if (file) return filterByFile(file);
+  if (fn) return filterByFunction(fn);
+  return repoOverview(repo);
+}
+
 async function handleRequest(
   res: ServerResponse,
   url: string,
   driver: Driver,
   opts: VisualizationOptions
 ): Promise<void> {
-  if (url === "/api/graph") {
-    const session = driver.session();
+  const parsedUrl = new URL(url, "http://localhost");
+  const pathname = parsedUrl.pathname;
+  const params = parsedUrl.searchParams;
+
+  if (pathname === "/api/graph") {
     try {
-      let cypher = `
-        MATCH (n)
-        WHERE n:Repository OR n:File OR n:Function OR n:Class
-        OPTIONAL MATCH (n)-[r]->(m)
-        WHERE m:Repository OR m:File OR m:Function OR m:Class
-        RETURN n, r, m
-        LIMIT 500
-      `;
-
-      if (opts.filter.repo) {
-        cypher = `
-          MATCH (repo:Repository {name: $repo})-[:CONTAINS_FILE]->(f:File)
-          OPTIONAL MATCH (f)-[:CONTAINS]->(sym)
-          OPTIONAL MATCH (sym)-[r]-(other)
-          RETURN repo, f, sym, r, other
-          LIMIT 500
-        `;
-      }
-
-      console.log("[viz] querying Neo4j...");
-      const result = await session.run(cypher, { repo: opts.filter.repo }, { timeout: 10000 });
-
-      const nodes = new Map<string, object>();
-      const edges: object[] = [];
-
-      for (const record of result.records) {
-        for (const key of record.keys) {
-          const val = record.get(key);
-          if (val && typeof val === "object" && "identity" in val) {
-            const id = val.identity.toString();
-            if (!nodes.has(id)) {
-              nodes.set(id, {
-                id,
-                label: val.properties.name || val.properties.relativePath || id,
-                group: val.labels?.[0] ?? "Unknown",
-                properties: val.properties,
-              });
-            }
-          }
-          if (val && typeof val === "object" && "type" in val && "start" in val) {
-            edges.push({
-              from: val.start.toString(),
-              to: val.end.toString(),
-              label: val.type,
-            });
-          }
-        }
-      }
-
-      console.log(`[viz] graph query OK: ${nodes.size} nodes, ${edges.length} edges`);
+      const data = await runCypher(driver, pickInitialQuery(opts, params));
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ nodes: Array.from(nodes.values()), edges }));
+      res.end(JSON.stringify(data));
     } catch (err) {
-      console.error("[viz] graph query error:", err);
+      console.error("[viz] /api/graph error:", err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: String(err) }));
-    } finally {
-      await session.close();
     }
     return;
   }
 
   // Serve static files
   const publicDir = join(__dirname, "public");
-  const filePath = join(publicDir, url === "/" ? "index.html" : url);
+  const filePath = join(publicDir, pathname === "/" ? "index.html" : pathname);
   console.log(`[viz] serving file: ${filePath}`);
 
   try {

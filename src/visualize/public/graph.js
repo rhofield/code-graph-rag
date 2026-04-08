@@ -59,6 +59,12 @@ async function fetchGraph(filters) {
   return resp.json();
 }
 
+async function fetchSearch(q) {
+  const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  if (!resp.ok) throw new Error("search failed");
+  return resp.json();
+}
+
 // === MERGE ===
 function mergeIntoLoaded({ nodes, edges }) {
   for (const n of nodes) {
@@ -107,11 +113,19 @@ function initNetwork() {
 function applyViewFilters() {
   const nodeUpdates = [];
   const edgeUpdates = [];
+  const q = viewState.search.trim().toLowerCase();
 
   loadedSet.nodes.forEach((n) => {
-    const hidden = !viewState.visibleNodeTypes.has(n._group);
-    if (n.hidden !== hidden) {
-      nodeUpdates.push({ id: n.id, hidden });
+    const typeHidden = !viewState.visibleNodeTypes.has(n._group);
+    const matches = !q || (n.label && n.label.toLowerCase().includes(q));
+    const hidden = typeHidden;
+    const borderWidth = q && matches ? 4 : 1;
+    const update = {};
+    if (n.hidden !== hidden) update.hidden = hidden;
+    if ((n.borderWidth ?? 1) !== borderWidth) update.borderWidth = borderWidth;
+    if (Object.keys(update).length) {
+      update.id = n.id;
+      nodeUpdates.push(update);
     }
   });
 
@@ -175,6 +189,43 @@ function bindSidebarEvents() {
       }
       applyViewFilters();
     });
+  });
+
+  let searchTimer = null;
+  const searchInput = document.getElementById("search-input");
+  const searchResult = document.getElementById("search-result");
+  searchInput.addEventListener("input", (e) => {
+    viewState.search = e.target.value;
+    applyViewFilters();
+
+    // Count local matches
+    const q = viewState.search.trim().toLowerCase();
+    if (!q) {
+      searchResult.textContent = "";
+      return;
+    }
+    const localHits = loadedSet.nodes.get({
+      filter: (n) => n.label && n.label.toLowerCase().includes(q),
+    }).length;
+    searchResult.textContent = `${localHits} local match${localHits === 1 ? "" : "es"}`;
+
+    // Debounced server fallback for "load missing matches"
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      if (viewState.search.trim().length < 2) return;
+      try {
+        const data = await fetchSearch(viewState.search.trim());
+        if (data.nodes && data.nodes.length > 0) {
+          mergeIntoLoaded(data);
+          applyViewFilters();
+          searchResult.textContent = `${localHits} local + ${data.nodes.length} server match${data.nodes.length === 1 ? "" : "es"}`;
+        } else if (localHits === 0) {
+          searchResult.textContent = "No matches";
+        }
+      } catch {
+        // Quietly ignore search failures — user is still typing
+      }
+    }, 350);
   });
 }
 

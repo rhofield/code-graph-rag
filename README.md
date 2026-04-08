@@ -252,7 +252,7 @@ If you already have a `post-commit` hook, the command appends to it rather than 
 ## Development
 
 ```bash
-git clone https://github.com/your-org/code-graph-rag
+git clone https://github.com/rhofield/code-graph-rag
 cd code-graph-rag
 npm install
 
@@ -271,38 +271,6 @@ npm test
 # Type check
 npm run lint
 ```
-
-### Project structure
-
-```
-src/
-  cli/
-    commands/       # One file per CLI subcommand
-    index.ts        # Commander entry point
-  indexer/
-    parser.ts       # tree-sitter WASM parsing
-    extractor.ts    # AST → graph entities
-    graph-writer.ts # Neo4j writes
-    staleness.ts    # Hash/mtime change detection
-    language-map.json
-  mcp/
-    tools/          # One file per MCP tool
-    index.ts        # MCP server entry point
-  db/
-    connection.ts
-    queries.ts
-    schema.ts
-  docker/           # Neo4j lifecycle helpers
-  visualize/        # Browser graph UI
-  config.ts
-tests/
-  unit/
-  integration/
-  e2e/
-  fixtures/         # Sample microservice repos for testing
-```
-
----
 
 ## License
 

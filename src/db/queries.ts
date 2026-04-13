@@ -330,3 +330,54 @@ export function batchDeleteOrphanFiles(filePaths: string[]): CypherQuery {
     params: { filePaths },
   };
 }
+
+export function batchSetRpcHandlerMeta(items: Array<{
+  functionName: string;
+  filePath: string;
+  rpcService: string;
+  rpcMethod: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      SET fn.rpcHandlerService = item.rpcService,
+          fn.rpcHandlerMethod = item.rpcMethod
+    `,
+    params: { items },
+  };
+}
+
+export function batchSetRpcCallerMeta(items: Array<{
+  functionName: string;
+  filePath: string;
+  rpcServices: string[];
+  rpcMethods: string[];
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      SET fn.rpcCallerServices = item.rpcServices,
+          fn.rpcCallerMethods = item.rpcMethods
+    `,
+    params: { items },
+  };
+}
+
+export function resolveRpcEdges(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (caller:Function)
+      WHERE caller.rpcCallerServices IS NOT NULL
+      WITH caller, range(0, size(caller.rpcCallerServices) - 1) AS indices
+      UNWIND indices AS i
+      WITH caller, caller.rpcCallerServices[i] AS svc, caller.rpcCallerMethods[i] AS method
+      MATCH (handler:Function {rpcHandlerService: svc, rpcHandlerMethod: method})
+      MERGE (caller)-[r:RPC_CALLS]->(handler)
+      SET r.serviceName = svc, r.methodName = method
+      RETURN count(r) AS edgesCreated
+    `,
+    params: {},
+  };
+}

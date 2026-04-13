@@ -134,3 +134,144 @@ describe.skipIf(!INTEGRATION)("gRPC monorepo integration", () => {
     }
   });
 });
+
+describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
+  let db: ReturnType<typeof createConnection>;
+
+  beforeAll(async () => {
+    db = createConnection({
+      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
+      username: process.env.NEO4J_USERNAME ?? "neo4j",
+      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
+    });
+    await setupSchema(db);
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath CONTAINS 'multirepo' DETACH DELETE n");
+    } finally {
+      await session.close();
+    }
+  });
+
+  afterAll(async () => {
+    await db.close();
+  });
+
+  it("resolves cross-repo RPC_CALLS with shared ProtoRegistry", async () => {
+    const registry = createProtoRegistry();
+
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/proto-repo"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-a"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+    const result = await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-b"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+
+    expect(result.rpcEdgesCreated).toBeGreaterThan(0);
+
+    const session = db.session();
+    try {
+      const res = await session.run(`
+        MATCH (caller:Function)-[r:RPC_CALLS]->(handler:Function)
+        WHERE caller.filePath CONTAINS 'service-a'
+          AND handler.filePath CONTAINS 'service-b'
+        RETURN caller.name AS callerName, handler.name AS handlerName,
+               r.serviceName AS serviceName, r.methodName AS methodName
+      `);
+      expect(res.records.length).toBeGreaterThan(0);
+      expect(res.records[0].get("callerName")).toBe("loadUser");
+      expect(res.records[0].get("handlerName")).toBe("getUser");
+      expect(res.records[0].get("serviceName")).toBe("UserService");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("resolves edges regardless of service indexing order", async () => {
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath CONTAINS 'multirepo' DETACH DELETE n");
+    } finally {
+      await session.close();
+    }
+
+    const registry = createProtoRegistry();
+
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/proto-repo"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+    // Index handler FIRST, then caller
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-b"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+    const result = await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-a"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+
+    expect(result.rpcEdgesCreated).toBeGreaterThan(0);
+
+    const session2 = db.session();
+    try {
+      const res = await session2.run(`
+        MATCH (caller:Function)-[r:RPC_CALLS]->(handler:Function)
+        WHERE caller.filePath CONTAINS 'service-a'
+          AND handler.filePath CONTAINS 'service-b'
+        RETURN count(r) AS count
+      `);
+      expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
+    } finally {
+      await session2.close();
+    }
+  });
+
+  it("preserves cross-repo edges when re-indexing a single service", async () => {
+    const registry = createProtoRegistry();
+
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/proto-repo"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-a"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] },
+      { protoRegistry: registry }
+    );
+
+    const session = db.session();
+    try {
+      const res = await session.run(`
+        MATCH (caller:Function)-[r:RPC_CALLS]->(handler:Function)
+        WHERE caller.filePath CONTAINS 'service-a'
+          AND handler.filePath CONTAINS 'service-b'
+        RETURN count(r) AS count
+      `);
+      expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
+    } finally {
+      await session.close();
+    }
+  });
+});

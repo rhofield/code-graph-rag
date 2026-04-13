@@ -17,6 +17,12 @@ import {
 } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
 import { runParallelPipeline } from "./parallel-pipeline.js";
+import { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
+import { parseProtoFiles } from "./proto-parser.js";
+import { detectRpcPatterns, type RpcAnnotation } from "./rpc-detector.js";
+import { linkRpcEdges } from "./rpc-linker.js";
+
+export { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
 
 /**
  * Attempt to list files via git, which natively respects .gitignore.
@@ -75,6 +81,7 @@ export interface IndexResult {
   functionsFound: number;
   classesFound: number;
   orphansRemoved: number;
+  rpcEdgesCreated: number;
   errors: Array<{ file: string; error: string }>;
 }
 
@@ -144,6 +151,7 @@ export async function indexRepository(
     specificPath?: string;
     concurrency?: number;
     maxMemoryMB?: number;
+    protoRegistry?: ProtoRegistry;
     onProgress?: (current: number, total: number, file: string) => void;
     onFlushProgress?: (completed: number, total: number) => void;
   } = {}
@@ -158,8 +166,24 @@ export async function indexRepository(
     files = await discoverFiles(absRoot, config);
   }
 
+  // Separate proto files for pre-processing (before language filter)
+  const protoFiles = files.filter((f) => f.endsWith(".proto"));
+  files = files.filter((f) => !f.endsWith(".proto"));
+
   // Filter to supported languages
   files = files.filter((f) => detectLanguage(f) !== null);
+
+  // Parse proto files into registry (always, even for changedOnly)
+  const registry = options.protoRegistry ?? createProtoRegistry();
+  if (protoFiles.length > 0) {
+    parseProtoFiles(protoFiles, registry);
+  }
+
+  // Create RPC detect function if registry has services
+  const rpcDetectFn = registry.getAllServices().length > 0
+    ? (tree: any, language: string, source: string, filePath: string) =>
+        detectRpcPatterns(tree, language, source, filePath, registry)
+    : undefined;
 
   // Build the full set of discovered file paths for import resolution
   const filePathSet = new Set(files);
@@ -227,8 +251,11 @@ export async function indexRepository(
     functionsFound: 0,
     classesFound: 0,
     orphansRemoved: 0,
+    rpcEdgesCreated: 0,
     errors: [],
   };
+
+  let allRpcAnnotations: RpcAnnotation[] = [];
 
   // Snapshot of what discovery returned, for orphan cleanup later. We capture
   // this before any post-discovery filtering so the cleanup compares against
@@ -254,11 +281,13 @@ export async function indexRepository(
       getMtimeFn: getFileMtime,
       onProgress: options.onProgress,
       onFlushProgress: options.onFlushProgress,
+      rpcDetectFn,
     });
     result.filesIndexed = pipelineResult.filesIndexed;
     result.functionsFound = pipelineResult.functionsFound;
     result.classesFound = pipelineResult.classesFound;
     result.errors = pipelineResult.errors;
+    allRpcAnnotations = pipelineResult.rpcAnnotations;
   } else {
     // Sequential fallback
     const batchWriter = new BatchGraphWriter(db, { filePathSet });
@@ -271,6 +300,10 @@ export async function indexRepository(
         let entities: ReturnType<typeof extractGraphEntities>;
         try {
           entities = extractGraphEntities(parseResult.tree, parseResult.language, parseResult.source, file);
+          if (rpcDetectFn) {
+            const fileRpcAnnotations = rpcDetectFn(parseResult.tree, parseResult.language, parseResult.source, file);
+            allRpcAnnotations.push(...fileRpcAnnotations);
+          }
         } finally {
           parseResult.tree.delete();
         }
@@ -289,6 +322,11 @@ export async function indexRepository(
     }
     await batchWriter.waitForPendingFlush();
     await batchWriter.flush();
+  }
+
+  // Link RPC edges from annotations
+  if (allRpcAnnotations.length > 0) {
+    result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations);
   }
 
   // Orphan cleanup: remove File nodes that exist in the graph under our scope

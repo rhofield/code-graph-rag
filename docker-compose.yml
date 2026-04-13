@@ -9,8 +9,9 @@ services:
       NEO4J_AUTH: neo4j/rho-graph
       NEO4J_PLUGINS: '[]'
     volumes:
-      - code-graph-rag-data:/data
+      - rho-graph-data:/data
     restart: unless-stopped
 
 volumes:
-  code-graph-rag-data:
+  rho-graph-data:
+    name: rho-graph-data

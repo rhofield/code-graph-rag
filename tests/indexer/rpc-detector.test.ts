@@ -43,3 +43,117 @@ describe("RPC Detector — gate check", () => {
     parsed!.tree.delete();
   });
 });
+
+describe("RPC Detector — Go", () => {
+  it("detects handler methods via receiver type ending in Server", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "go-handler.go"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "go-handler.go", registry);
+    parsed!.tree.delete();
+
+    const handlers = annotations.filter((a) => a.role === "handler");
+    expect(handlers).toHaveLength(2);
+    expect(handlers.find((h) => h.methodName === "GetUser")).toBeDefined();
+    expect(handlers.find((h) => h.methodName === "CreateUser")).toBeDefined();
+    expect(handlers[0].serviceName).toBe("UserService");
+  });
+
+  it("detects caller via method call on client object", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "go-caller.go"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "go-caller.go", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].functionName).toBe("fetchUser");
+    expect(callers[0].serviceName).toBe("UserService");
+    expect(callers[0].methodName).toBe("GetUser");
+  });
+});
+
+describe("RPC Detector — Python", () => {
+  it("detects handler methods via Servicer base class", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "python-handler.py"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "python-handler.py", registry);
+    parsed!.tree.delete();
+
+    const handlers = annotations.filter((a) => a.role === "handler");
+    expect(handlers).toHaveLength(2);
+    expect(handlers.find((h) => h.methodName === "GetUser")).toBeDefined();
+    expect(handlers.find((h) => h.methodName === "CreateUser")).toBeDefined();
+  });
+
+  it("detects caller via stub method call", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "python-caller.py"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "python-caller.py", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].functionName).toBe("fetch_user");
+    expect(callers[0].serviceName).toBe("UserService");
+    expect(callers[0].methodName).toBe("GetUser");
+  });
+});
+
+describe("RPC Detector — TypeScript", () => {
+  it("detects handler methods via implements clause", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-handler.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-handler.ts", registry);
+    parsed!.tree.delete();
+
+    const handlers = annotations.filter((a) => a.role === "handler");
+    expect(handlers).toHaveLength(2);
+    const getUser = handlers.find((h) => h.methodName === "GetUser");
+    expect(getUser).toBeDefined();
+    expect(getUser!.functionName).toBe("getUser");
+    expect(getUser!.serviceName).toBe("UserService");
+  });
+
+  it("detects caller via client method call (camelCase)", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-caller.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-caller.ts", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].functionName).toBe("loadUser");
+    expect(callers[0].serviceName).toBe("UserService");
+    expect(callers[0].methodName).toBe("GetUser");
+  });
+});
+
+describe("RPC Detector — Java", () => {
+  it("detects handler methods via extends ImplBase", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "java-handler.java"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "java-handler.java", registry);
+    parsed!.tree.delete();
+
+    const handlers = annotations.filter((a) => a.role === "handler");
+    expect(handlers).toHaveLength(2);
+    const getUser = handlers.find((h) => h.methodName === "GetUser");
+    expect(getUser).toBeDefined();
+    expect(getUser!.functionName).toBe("getUser");
+    expect(getUser!.serviceName).toBe("UserService");
+  });
+
+  it("detects caller via stub method call (camelCase)", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "java-caller.java"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "java-caller.java", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].functionName).toBe("fetchUserName");
+    expect(callers[0].serviceName).toBe("UserService");
+    expect(callers[0].methodName).toBe("GetUser");
+  });
+});
+
+describe("RPC Detector — false positive rejection", () => {
+  it("does not annotate non-gRPC file with matching function name", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "not-grpc.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "not-grpc.ts", registry);
+    parsed!.tree.delete();
+    expect(annotations).toEqual([]);
+  });
+});

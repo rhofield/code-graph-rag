@@ -69,7 +69,7 @@ function findCallsInBody(
   registry: ProtoRegistry,
   out: RpcAnnotation[]
 ): void {
-  if (node.type === "call_expression") {
+  if (node.type === "call_expression" || node.type === "call") {
     const fnNode = node.childForFieldName("function");
     if (fnNode && (
       fnNode.type === "selector_expression" ||
@@ -167,14 +167,198 @@ function findJavaCallsInBody(
 
 // --- Handler/caller detection stubs (filled in Task 5) ---
 
-function detectGoHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectGoCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectPythonHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectPythonCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectTypeScriptHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectJavaHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
-function detectJavaCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {}
+function detectGoHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "method_declaration") {
+      const receiver = node.childForFieldName("receiver");
+      const methodNameNode = node.childForFieldName("name");
+      if (receiver && methodNameNode) {
+        const receiverText = getNodeText(receiver, source);
+        const methodName = getNodeText(methodNameNode, source);
+        for (const svcName of registry.getAllServices()) {
+          if (receiverText.includes(svcName) && /Server[)\s,]/.test(receiverText + " ")) {
+            const def = registry.lookup(svcName, methodName);
+            if (def) {
+              out.push({ functionName: methodName, filePath, role: "handler", serviceName: svcName, methodName: def.methodName });
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+  walk(root);
+}
+
+function detectGoCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "function_declaration" || node.type === "method_declaration") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) findCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
+  }
+  walkFns(root);
+}
+
+function detectPythonHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "class_definition") {
+      const argList = node.childForFieldName("superclasses");
+      let matchedService: string | null = null;
+      if (argList) {
+        const baseText = getNodeText(argList, source);
+        for (const svcName of registry.getAllServices()) {
+          if (baseText.includes(svcName) && baseText.includes("Servicer")) {
+            matchedService = svcName;
+            break;
+          }
+        }
+      }
+      if (matchedService) {
+        const body = node.childForFieldName("body");
+        if (body) {
+          for (let i = 0; i < body.childCount; i++) {
+            const child = body.child(i)!;
+            if (child.type === "function_definition") {
+              const nameNode = child.childForFieldName("name");
+              if (nameNode) {
+                const methodName = getNodeText(nameNode, source);
+                const def = registry.lookup(matchedService, methodName);
+                if (def) {
+                  out.push({ functionName: methodName, filePath, role: "handler", serviceName: matchedService, methodName: def.methodName });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+  walk(root);
+}
+
+function detectPythonCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "function_definition") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) findCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
+  }
+  walkFns(root);
+}
+
+function detectTypeScriptHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "class_declaration") {
+      let matchedService: string | null = null;
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i)!;
+        if (child.type === "class_heritage") {
+          const text = getNodeText(child, source);
+          for (const svcName of registry.getAllServices()) {
+            if (text.includes(svcName) && text.includes("Server")) {
+              matchedService = svcName;
+              break;
+            }
+          }
+        }
+      }
+      if (matchedService) {
+        const body = node.childForFieldName("body");
+        if (body) {
+          for (let i = 0; i < body.childCount; i++) {
+            const child = body.child(i)!;
+            if (child.type === "method_definition") {
+              const nameNode = child.childForFieldName("name");
+              if (nameNode) {
+                const methodName = getNodeText(nameNode, source);
+                const defs = registry.lookupByMethod(methodName);
+                for (const def of defs) {
+                  if (def.serviceName === matchedService) {
+                    out.push({ functionName: methodName, filePath, role: "handler", serviceName: matchedService, methodName: def.methodName });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+  walk(root);
+}
+
+function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "function_declaration" || node.type === "arrow_function" || node.type === "method_definition") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) findCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
+  }
+  walkFns(root);
+}
+
+function detectJavaHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "class_declaration") {
+      let matchedService: string | null = null;
+      const superclass = node.childForFieldName("superclass");
+      if (superclass) {
+        const superText = getNodeText(superclass, source);
+        if (superText.includes("ImplBase")) {
+          for (const svcName of registry.getAllServices()) {
+            if (superText.includes(svcName)) {
+              matchedService = svcName;
+              break;
+            }
+          }
+        }
+      }
+      if (matchedService) {
+        const body = node.childForFieldName("body");
+        if (body) {
+          for (let i = 0; i < body.childCount; i++) {
+            const child = body.child(i)!;
+            if (child.type === "method_declaration") {
+              const nameNode = child.childForFieldName("name");
+              if (nameNode) {
+                const methodName = getNodeText(nameNode, source);
+                const defs = registry.lookupByMethod(methodName);
+                for (const def of defs) {
+                  if (def.serviceName === matchedService) {
+                    out.push({ functionName: methodName, filePath, role: "handler", serviceName: matchedService, methodName: def.methodName });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+  walk(root);
+}
+
+function detectJavaCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  function walkMethods(node: Parser.SyntaxNode): void {
+    if (node.type === "method_declaration") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) findJavaCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) walkMethods(node.child(i)!);
+  }
+  walkMethods(root);
+}
 
 // --- Per-language dispatch ---
 

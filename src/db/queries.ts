@@ -419,6 +419,20 @@ export function loadAllProtoDefs(): CypherQuery {
   };
 }
 
+export function batchDeleteOrphanProtoMethods(
+  keep: Array<{ serviceName: string; methodName: string }>
+): CypherQuery {
+  return {
+    cypher: `
+      WITH [k IN $keep | k.serviceName + "::" + k.methodName] AS keepKeys
+      MATCH (m:ProtoMethod)
+      WHERE NOT (m.serviceName + "::" + m.methodName) IN keepKeys
+      DETACH DELETE m
+    `,
+    params: { keep },
+  };
+}
+
 export function resolveRpcEdges(): CypherQuery {
   return {
     cypher: `

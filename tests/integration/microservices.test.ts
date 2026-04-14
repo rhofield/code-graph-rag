@@ -234,6 +234,45 @@ func invoke(ctx context.Context, c pb.UserServiceClient) {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  // Note: this test's full-index prune deletes ProtoMethod nodes from other
+  // services in the shared DB. Kept last in this describe block; subsequent
+  // describe blocks re-index their fixtures and repopulate their own defs.
+  it("removes orphan ProtoMethod nodes when methods are deleted from .proto", async () => {
+    const tmpRoot = resolve("tests/fixtures/grpc/_tmp-orphan");
+    const protoPath = resolve(tmpRoot, "svc.proto");
+    await fs.mkdir(tmpRoot, { recursive: true });
+    await fs.writeFile(protoPath, `
+      syntax = "proto3";
+      package t;
+      service T {
+        rpc A (Req) returns (Resp);
+        rpc B (Req) returns (Resp);
+      }
+    `);
+    await indexRepository(db, tmpRoot, DEFAULT_CONFIG.index);
+
+    // Remove method B
+    await fs.writeFile(protoPath, `
+      syntax = "proto3";
+      package t;
+      service T { rpc A (Req) returns (Resp); }
+    `);
+    await indexRepository(db, tmpRoot, DEFAULT_CONFIG.index);
+
+    const session = db.session();
+    try {
+      const r = await session.run(
+        `MATCH (m:ProtoMethod {serviceName: "T"}) RETURN collect(m.methodName) AS names`
+      );
+      const names = r.records[0].get("names");
+      expect(names).toContain("A");
+      expect(names).not.toContain("B");
+    } finally {
+      await session.close();
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {

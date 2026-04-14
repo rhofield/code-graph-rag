@@ -16,6 +16,7 @@ import {
   batchDeleteOrphanFiles,
   batchUpsertProtoDefs,
   loadAllProtoDefs,
+  batchDeleteOrphanProtoMethods,
 } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
 import { runParallelPipeline } from "./parallel-pipeline.js";
@@ -231,6 +232,25 @@ export async function indexRepository(
     parseProtoFiles(protoFiles, registry);
     // Persist locally-discovered protos so later single-repo indexes can see them.
     await persistProtoDefs(db, registry);
+  }
+
+  // On single-repo full index runs, prune ProtoMethod nodes that no longer exist
+  // in any parsed proto. Skip for changedOnly (incomplete proto coverage) and for
+  // workspace runs (options.protoRegistry set — pruning would wipe other repos' defs).
+  if (!options.changedOnly && protoFiles.length > 0 && !options.protoRegistry) {
+    const keep = registry.getAllServices().flatMap((svc) =>
+      registry.getServiceMethods(svc).map((d) => ({
+        serviceName: d.serviceName,
+        methodName: d.methodName,
+      }))
+    );
+    const session = db.session();
+    try {
+      const q = batchDeleteOrphanProtoMethods(keep);
+      await session.run(q.cypher, q.params);
+    } finally {
+      await session.close();
+    }
   }
 
   // Hydrate from graph so services defined in other repos (indexed earlier) are

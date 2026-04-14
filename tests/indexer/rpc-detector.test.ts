@@ -131,6 +131,28 @@ describe("RPC Detector — TypeScript", () => {
     expect(createUserCaller).toBeDefined();
     expect(createUserCaller!.methodName).toBe("CreateUser");
   });
+
+  it("disambiguates by exact receiver token, not substring match", async () => {
+    const ambiguousReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (Req) returns (Resp);
+      }
+      service UserServiceHelper {
+        rpc GetUser (Req) returns (Resp);
+      }
+    `, "/protos/ambiguous.proto", ambiguousReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-ambiguous.ts"));
+    const ann = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-ambiguous.ts", ambiguousReg);
+    parsed!.tree.delete();
+
+    const callers = ann.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].serviceName).toBe("UserServiceHelper");
+  });
 });
 
 describe("RPC Detector — Java", () => {

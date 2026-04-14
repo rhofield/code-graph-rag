@@ -13,6 +13,36 @@ function getNodeText(node: Parser.SyntaxNode, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
 }
 
+function identifierTokens(text: string): string[] {
+  return text.split(/[^A-Za-z0-9_]+/).filter(Boolean);
+}
+
+function serviceReceiverAliases(serviceName: string): string[] {
+  const aliases = new Set<string>([serviceName]);
+  for (const suffix of ["Client", "Stub", "Server", "Service"]) {
+    if (serviceName.endsWith(suffix) && serviceName.length > suffix.length) {
+      aliases.add(serviceName.slice(0, -suffix.length));
+    }
+  }
+  return [...aliases];
+}
+
+function pickByReceiver<T extends { serviceName: string; methodName: string }>(
+  objText: string,
+  defs: T[]
+): T | null {
+  const tokensLower = identifierTokens(objText).map((t) => t.toLowerCase());
+  let match: T | null = null;
+  for (const def of defs) {
+    const aliases = serviceReceiverAliases(def.serviceName).map((a) => a.toLowerCase());
+    if (aliases.some((a) => tokensLower.includes(a))) {
+      if (match && match.serviceName !== def.serviceName) return null; // ambiguous → skip
+      match = def;
+    }
+  }
+  return match;
+}
+
 // --- Gate checks: does this file import gRPC-generated code? ---
 
 function hasGrpcImportsGo(root: Parser.SyntaxNode, source: string): boolean {
@@ -94,18 +124,15 @@ function findCallsInBody(
         } else if (defs.length > 1) {
           const objNode = fnNode.childForFieldName("operand") || fnNode.childForFieldName("object");
           if (objNode) {
-            const objText = getNodeText(objNode, source).toLowerCase();
-            for (const def of defs) {
-              if (objText.includes(def.serviceName.toLowerCase().replace("service", ""))) {
-                out.push({
-                  functionName: enclosingFuncName,
-                  filePath,
-                  role: "caller",
-                  serviceName: def.serviceName,
-                  methodName: def.methodName,
-                });
-                break;
-              }
+            const picked = pickByReceiver(getNodeText(objNode, source), defs);
+            if (picked) {
+              out.push({
+                functionName: enclosingFuncName,
+                filePath,
+                role: "caller",
+                serviceName: picked.serviceName,
+                methodName: picked.methodName,
+              });
             }
           }
         }
@@ -143,18 +170,15 @@ function findJavaCallsInBody(
       } else if (defs.length > 1) {
         const objNode = node.childForFieldName("object");
         if (objNode) {
-          const objText = getNodeText(objNode, source).toLowerCase();
-          for (const def of defs) {
-            if (objText.includes(def.serviceName.toLowerCase().replace("service", ""))) {
-              out.push({
-                functionName: enclosingFuncName,
-                filePath,
-                role: "caller",
-                serviceName: def.serviceName,
-                methodName: def.methodName,
-              });
-              break;
-            }
+          const picked = pickByReceiver(getNodeText(objNode, source), defs);
+          if (picked) {
+            out.push({
+              functionName: enclosingFuncName,
+              filePath,
+              role: "caller",
+              serviceName: picked.serviceName,
+              methodName: picked.methodName,
+            });
           }
         }
       }

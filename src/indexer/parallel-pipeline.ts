@@ -1,4 +1,5 @@
 import { relative } from "node:path";
+import type Parser from "web-tree-sitter";
 import type { BatchGraphWriter } from "./batch-writer.js";
 import type { RpcAnnotation } from "./rpc-detector.js";
 
@@ -40,7 +41,7 @@ export interface PipelineOptions {
   getMtimeFn: (filePath: string) => number;
   onProgress?: (current: number, total: number, file: string) => void;
   onFlushProgress?: (completed: number, total: number) => void;
-  rpcDetectFn?: (tree: any, language: string, source: string, filePath: string) => RpcAnnotation[];
+  rpcDetectFn?: (tree: Parser.Tree, language: string, source: string, filePath: string) => RpcAnnotation[];
 }
 
 export interface PipelineResult {

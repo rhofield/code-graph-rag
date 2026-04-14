@@ -303,9 +303,9 @@ func invoke(ctx context.Context, c pb.UserServiceClient) {
         `MATCH (m:ProtoMethod {serviceName: "SurvivorService", methodName: "SurvivorMethod"}) RETURN count(m) AS c`
       );
       expect(r.records[0].get("c").toNumber()).toBe(1);
-      // Cleanup seeded node
-      await session.run(`MATCH (m:ProtoMethod {serviceName: "SurvivorService"}) DETACH DELETE m`);
     } finally {
+      // Cleanup seeded node — must run even if the assertion throws
+      await session.run(`MATCH (m:ProtoMethod {serviceName: "SurvivorService"}) DETACH DELETE m`);
       await session.close();
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }

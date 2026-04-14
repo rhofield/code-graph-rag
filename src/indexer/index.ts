@@ -1,4 +1,4 @@
-import { resolve, relative } from "node:path";
+import { resolve, relative, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { glob } from "glob";
 import { minimatch } from "minimatch";
@@ -252,7 +252,8 @@ export async function indexRepository(
     if (keep.length > 0) {
       const session = db.session();
       try {
-        const q = batchDeleteOrphanProtoMethods(keep, absRoot);
+        const prefix = absRoot.endsWith(sep) ? absRoot : absRoot + sep;
+        const q = batchDeleteOrphanProtoMethods(keep, prefix);
         await session.run(q.cypher, q.params);
       } finally {
         await session.close();

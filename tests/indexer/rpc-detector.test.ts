@@ -45,7 +45,7 @@ describe("RPC Detector — gate check", () => {
 });
 
 describe("RPC Detector — Go", () => {
-  it("detects handler methods via receiver type ending in Server", async () => {
+  it("detects handler methods via embedded Unimplemented*Server field", async () => {
     const parsed = await parseFile(resolve(FIXTURES, "go-handler.go"));
     const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "go-handler.go", registry);
     parsed!.tree.delete();
@@ -55,6 +55,15 @@ describe("RPC Detector — Go", () => {
     expect(handlers.find((h) => h.methodName === "GetUser")).toBeDefined();
     expect(handlers.find((h) => h.methodName === "CreateUser")).toBeDefined();
     expect(handlers[0].serviceName).toBe("UserService");
+  });
+
+  it("does NOT annotate structs lacking Unimplemented*Server embedding", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "go-false-positive.go"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "go-false-positive.go", registry);
+    parsed!.tree.delete();
+
+    const handlers = annotations.filter((a) => a.role === "handler");
+    expect(handlers).toHaveLength(0);
   });
 
   it("detects caller via method call on client object", async () => {

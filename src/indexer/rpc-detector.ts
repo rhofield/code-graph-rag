@@ -211,19 +211,132 @@ function findJavaCallsInBody(
 
 // --- Handler/caller detection stubs (filled in Task 5) ---
 
+// Extract the trailing identifier from a Go type expression text
+// (e.g. "pb.UnimplementedFooServer" -> "UnimplementedFooServer";
+// "UnimplementedFooServer" -> "UnimplementedFooServer").
+function trailingIdent(typeText: string): string {
+  const trimmed = typeText.trim();
+  const lastDot = trimmed.lastIndexOf(".");
+  return lastDot >= 0 ? trimmed.slice(lastDot + 1) : trimmed;
+}
+
+// Extract the bare struct identifier from a Go method receiver subtree.
+// Receiver is a parameter_list with one parameter_declaration whose type is
+// either a pointer_type (*Foo) or a type_identifier (Foo). Returns null if
+// it can't find one.
+function extractReceiverStructName(receiver: Parser.SyntaxNode, source: string): string | null {
+  for (let i = 0; i < receiver.childCount; i++) {
+    const child = receiver.child(i)!;
+    if (child.type === "parameter_declaration") {
+      const typeNode = child.childForFieldName("type");
+      if (!typeNode) continue;
+      if (typeNode.type === "pointer_type") {
+        // First (and typically only) child is the referenced type.
+        for (let j = 0; j < typeNode.childCount; j++) {
+          const t = typeNode.child(j)!;
+          if (t.type === "type_identifier") return getNodeText(t, source);
+          if (t.type === "qualified_type") return trailingIdent(getNodeText(t, source));
+        }
+        // Fallback: strip leading * from text.
+        return getNodeText(typeNode, source).replace(/^\s*\*\s*/, "").trim();
+      }
+      if (typeNode.type === "type_identifier") {
+        return getNodeText(typeNode, source);
+      }
+      if (typeNode.type === "qualified_type") {
+        return trailingIdent(getNodeText(typeNode, source));
+      }
+    }
+  }
+  return null;
+}
+
+// Build a map from struct name -> list of service names the struct serves,
+// based on embedded `Unimplemented<Service>Server` fields in struct_type
+// field declarations. Only records service names present in the registry.
+function buildGoStructServiceMap(
+  root: Parser.SyntaxNode,
+  source: string,
+  registry: ProtoRegistry
+): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const knownServices = new Set(registry.getAllServices());
+
+  function visitTypeSpec(typeSpec: Parser.SyntaxNode): void {
+    const nameNode = typeSpec.childForFieldName("name");
+    const typeNode = typeSpec.childForFieldName("type");
+    if (!nameNode || !typeNode || typeNode.type !== "struct_type") return;
+    const structName = getNodeText(nameNode, source);
+
+    // struct_type contains a field_declaration_list.
+    let fieldList: Parser.SyntaxNode | null = null;
+    for (let i = 0; i < typeNode.childCount; i++) {
+      const c = typeNode.child(i)!;
+      if (c.type === "field_declaration_list") {
+        fieldList = c;
+        break;
+      }
+    }
+    if (!fieldList) return;
+
+    for (let i = 0; i < fieldList.childCount; i++) {
+      const field = fieldList.child(i)!;
+      if (field.type !== "field_declaration") continue;
+      // Embedded field: no `name` field, only a `type` field.
+      const fName = field.childForFieldName("name");
+      if (fName) continue;
+      const fType = field.childForFieldName("type");
+      if (!fType) continue;
+      const typeText = getNodeText(fType, source);
+      const tail = trailingIdent(typeText);
+      const m = tail.match(/^Unimplemented(.+)Server$/);
+      if (!m) continue;
+      const svcName = m[1];
+      if (!knownServices.has(svcName)) continue;
+      const existing = map.get(structName);
+      if (existing) {
+        if (!existing.includes(svcName)) existing.push(svcName);
+      } else {
+        map.set(structName, [svcName]);
+      }
+    }
+  }
+
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "type_declaration") {
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i)!;
+        if (c.type === "type_spec") visitTypeSpec(c);
+      }
+      return;
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+  walk(root);
+  return map;
+}
+
 function detectGoHandlers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  // First pass: find structs that embed Unimplemented<Service>Server.
+  const structServices = buildGoStructServiceMap(root, source, registry);
+  if (structServices.size === 0) return;
+
+  // Second pass: attribute method_declarations to their receiver struct.
   function walk(node: Parser.SyntaxNode): void {
     if (node.type === "method_declaration") {
       const receiver = node.childForFieldName("receiver");
       const methodNameNode = node.childForFieldName("name");
       if (receiver && methodNameNode) {
-        const receiverText = getNodeText(receiver, source);
+        const structName = extractReceiverStructName(receiver, source);
         const methodName = getNodeText(methodNameNode, source);
-        for (const svcName of registry.getAllServices()) {
-          if (receiverText.includes(svcName) && /Server[)\s,]/.test(receiverText + " ")) {
-            const def = registry.lookup(svcName, methodName);
-            if (def) {
-              out.push({ functionName: methodName, filePath, role: "handler", serviceName: svcName, methodName: def.methodName });
+        if (structName) {
+          const services = structServices.get(structName);
+          if (services) {
+            for (const svcName of services) {
+              const def = registry.lookup(svcName, methodName);
+              if (def) {
+                out.push({ functionName: methodName, filePath, role: "handler", serviceName: svcName, methodName: def.methodName });
+              }
             }
           }
         }

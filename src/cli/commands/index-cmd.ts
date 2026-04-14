@@ -5,27 +5,67 @@ import { resolve } from "node:path";
 import { loadConfig } from "../../config.js";
 import { createConnection } from "../../db/connection.js";
 import { indexRepository } from "../../indexer/index.js";
+import { indexWorkspace } from "../../indexer/workspace.js";
 
 export function registerIndexCommand(program: Command): void {
   program
     .command("index")
-    .description("Re-index the repository")
+    .description("Re-index the repository (or workspace if configured)")
     .option("--changed", "Only index changed files")
     .option("--path <path>", "Index a specific path")
-    .option("--repo <repoPath>", "Index a different repository")
+    .option("--repo <repoPath>", "Index a different repository (disables workspace mode)")
     .option("--concurrency <n>", "Number of parallel parse tasks", "8")
     .option("--max-memory <mb>", "Max buffer memory in MB before backpressure", "8192")
     .action(async (opts) => {
-      const repoPath = resolve(opts.repo || ".");
-      const config = loadConfig(repoPath);
+      const workspaceRoot = resolve(opts.repo || ".");
+      const config = loadConfig(workspaceRoot);
       const db = createConnection(config.neo4j);
+      const concurrency = parseInt(opts.concurrency, 10);
+      const maxMemoryMB = parseInt(opts.maxMemory, 10);
+
+      // Workspace mode: iterate over config.repos with a shared ProtoRegistry.
+      // Skipped when --repo or --path is set, since those imply targeting a single repo.
+      const useWorkspace =
+        config.repos.length > 0 && !opts.repo && !opts.path;
+
+      if (useWorkspace) {
+        const spinner = ora(`Indexing workspace (${config.repos.length} repos)...`).start();
+        const result = await indexWorkspace(db, workspaceRoot, config.repos, config.index, {
+          changedOnly: opts.changed,
+          concurrency,
+          maxMemoryMB,
+          onRepoStart: (name, _path, i, total) => {
+            spinner.text = `Indexing ${name} (${i + 1}/${total})...`;
+          },
+          onProgress: (current, total) => {
+            spinner.text = `Parsing... ${current}/${total}`;
+          },
+        });
+        const orphanSuffix =
+          result.orphansRemoved > 0
+            ? ` (removed ${result.orphansRemoved} orphaned files)`
+            : "";
+        spinner.succeed(
+          `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ` +
+            `${result.classesFound} classes, ${result.rpcEdgesCreated} RPC edges ` +
+            `across ${result.repos.length} repos${orphanSuffix}`
+        );
+        if (result.errors.length > 0) {
+          console.log(`\n${result.errors.length} files had errors:`);
+          for (const err of result.errors.slice(0, 5)) {
+            console.log(`  ${err.file}: ${err.error}`);
+          }
+        }
+        await db.close();
+        return;
+      }
 
       const spinner = ora("Parsing files...").start();
-      const result = await indexRepository(db, repoPath, config.index, {
+      const result = await indexRepository(db, workspaceRoot, config.index, {
         changedOnly: opts.changed,
         specificPath: opts.path,
-        concurrency: parseInt(opts.concurrency, 10),
-        maxMemoryMB: parseInt(opts.maxMemory, 10),
+        concurrency,
+        maxMemoryMB,
         onProgress: (current, total) => {
           spinner.text = `Parsing files... ${current}/${total}`;
         },

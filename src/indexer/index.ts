@@ -14,6 +14,8 @@ import {
   deleteFileAndRelationships,
   getAllFilePathsUnderPrefix,
   batchDeleteOrphanFiles,
+  batchUpsertProtoDefs,
+  loadAllProtoDefs,
 } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
 import { runParallelPipeline } from "./parallel-pipeline.js";
@@ -23,6 +25,56 @@ import { detectRpcPatterns, type RpcAnnotation } from "./rpc-detector.js";
 import { linkRpcEdges } from "./rpc-linker.js";
 
 export { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
+
+async function persistProtoDefs(db: DbConnection, registry: ProtoRegistry): Promise<void> {
+  const items = registry.getAllServices().flatMap((svc) =>
+    registry.getServiceMethods(svc).map((def) => ({
+      serviceName: def.serviceName,
+      methodName: def.methodName,
+      methodCamel: def.methodCamel,
+      requestType: def.requestType,
+      responseType: def.responseType,
+      packageName: def.packageName,
+      protoFile: def.protoFile,
+    }))
+  );
+  if (items.length === 0) return;
+  const session = db.session();
+  try {
+    const q = batchUpsertProtoDefs(items);
+    await session.run(q.cypher, q.params);
+  } finally {
+    await session.close();
+  }
+}
+
+async function hydrateProtoRegistry(db: DbConnection, registry: ProtoRegistry): Promise<void> {
+  const session = db.session();
+  try {
+    const q = loadAllProtoDefs();
+    const result = await session.run(q.cypher, q.params);
+    const seen = new Set(
+      registry.getAllServices().flatMap((svc) =>
+        registry.getServiceMethods(svc).map((d) => `${d.serviceName}::${d.methodName}`)
+      )
+    );
+    for (const r of result.records) {
+      const key = `${r.get("serviceName")}::${r.get("methodName")}`;
+      if (seen.has(key)) continue;
+      registry.register({
+        serviceName: r.get("serviceName"),
+        methodName: r.get("methodName"),
+        methodCamel: r.get("methodCamel"),
+        requestType: r.get("requestType"),
+        responseType: r.get("responseType"),
+        packageName: r.get("packageName") ?? "",
+        protoFile: r.get("protoFile") ?? "",
+      });
+    }
+  } finally {
+    await session.close();
+  }
+}
 
 /**
  * Attempt to list files via git, which natively respects .gitignore.
@@ -177,7 +229,14 @@ export async function indexRepository(
   const registry = options.protoRegistry ?? createProtoRegistry();
   if (protoFiles.length > 0) {
     parseProtoFiles(protoFiles, registry);
+    // Persist locally-discovered protos so later single-repo indexes can see them.
+    await persistProtoDefs(db, registry);
   }
+
+  // Hydrate from graph so services defined in other repos (indexed earlier) are
+  // visible to this run's detector. Without this, indexing service-b alone would
+  // skip RPC detection whenever its .proto lives in a separate repo.
+  await hydrateProtoRegistry(db, registry);
 
   // Create RPC detect function if registry has services
   const rpcDetectFn = registry.getAllServices().length > 0

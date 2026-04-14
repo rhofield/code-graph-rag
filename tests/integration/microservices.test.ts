@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createConnection } from "../../src/db/connection.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { indexRepository, createProtoRegistry } from "../../src/indexer/index.js";
+import { indexWorkspace } from "../../src/indexer/workspace.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
 
 const INTEGRATION = !!process.env.INTEGRATION;
@@ -242,6 +243,89 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
       expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
     } finally {
       await session2.close();
+    }
+  });
+
+  it("resolves cross-repo edges via graph hydration when no shared registry is passed", async () => {
+    // Simulates the CLI pathway: each invocation runs with a fresh registry.
+    // Proto definitions persisted by the first run must be picked up by later
+    // runs through the ProtoMethod hydration step, otherwise rpcDetectFn is
+    // undefined and no annotations are ever recorded.
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath CONTAINS 'multirepo' DETACH DELETE n");
+      await session.run("MATCH (m:ProtoMethod) DETACH DELETE m");
+    } finally {
+      await session.close();
+    }
+
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/proto-repo"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+    await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-b"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+    const result = await indexRepository(
+      db,
+      resolve("tests/fixtures/grpc/multirepo/service-a"),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+
+    expect(result.rpcEdgesCreated).toBeGreaterThan(0);
+
+    const session2 = db.session();
+    try {
+      const res = await session2.run(`
+        MATCH (caller:Function)-[r:RPC_CALLS]->(handler:Function)
+        WHERE caller.filePath CONTAINS 'service-a'
+          AND handler.filePath CONTAINS 'service-b'
+        RETURN count(r) AS count
+      `);
+      expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
+    } finally {
+      await session2.close();
+    }
+  });
+
+  it("indexWorkspace resolves cross-repo edges with config.repos-style paths", async () => {
+    const session0 = db.session();
+    try {
+      await session0.run("MATCH (n) WHERE n.filePath CONTAINS 'multirepo' DETACH DELETE n");
+      await session0.run("MATCH (m:ProtoMethod) DETACH DELETE m");
+    } finally {
+      await session0.close();
+    }
+
+    const workspaceRoot = resolve("tests/fixtures/grpc/multirepo");
+    const result = await indexWorkspace(
+      db,
+      workspaceRoot,
+      [
+        { path: "proto-repo", name: "proto" },
+        { path: "service-b", name: "service-b" },
+        { path: "service-a", name: "service-a" },
+      ],
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+
+    expect(result.rpcEdgesCreated).toBeGreaterThan(0);
+    expect(result.repos.length).toBe(3);
+
+    const session = db.session();
+    try {
+      const res = await session.run(`
+        MATCH (caller:Function)-[r:RPC_CALLS]->(handler:Function)
+        WHERE caller.filePath CONTAINS 'service-a'
+          AND handler.filePath CONTAINS 'service-b'
+        RETURN count(r) AS count
+      `);
+      expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
+    } finally {
+      await session.close();
     }
   });
 

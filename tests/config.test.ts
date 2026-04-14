@@ -29,7 +29,7 @@ describe("loadConfig", () => {
       index: { exclude: ["vendor"] },
     };
     writeFileSync(
-      join(tempDir, ".code-graph-rag.json"),
+      join(tempDir, ".rho-graph.json"),
       JSON.stringify(repoConfig)
     );
     const config = loadConfig(tempDir);

@@ -17,7 +17,7 @@ export interface IndexConfig {
 
 export interface RepoEntry {
   path: string;
-  name: string;
+  name?: string;
 }
 
 export interface Config {

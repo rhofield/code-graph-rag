@@ -365,6 +365,45 @@ export function batchSetRpcCallerMeta(items: Array<{
   };
 }
 
+export function batchUpsertProtoDefs(items: Array<{
+  serviceName: string;
+  methodName: string;
+  methodCamel: string;
+  requestType: string;
+  responseType: string;
+  packageName: string;
+  protoFile: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (m:ProtoMethod {serviceName: item.serviceName, methodName: item.methodName})
+      SET m.methodCamel = item.methodCamel,
+          m.requestType = item.requestType,
+          m.responseType = item.responseType,
+          m.packageName = item.packageName,
+          m.protoFile = item.protoFile
+    `,
+    params: { items },
+  };
+}
+
+export function loadAllProtoDefs(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (m:ProtoMethod)
+      RETURN m.serviceName AS serviceName,
+             m.methodName AS methodName,
+             m.methodCamel AS methodCamel,
+             m.requestType AS requestType,
+             m.responseType AS responseType,
+             m.packageName AS packageName,
+             m.protoFile AS protoFile
+    `,
+    params: {},
+  };
+}
+
 export function resolveRpcEdges(): CypherQuery {
   return {
     cypher: `

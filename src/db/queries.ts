@@ -365,6 +365,21 @@ export function batchSetRpcCallerMeta(items: Array<{
   };
 }
 
+export function clearRpcMetaForFiles(filePaths: string[]): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $filePaths AS fp
+      MATCH (fn:Function {filePath: fp})
+      OPTIONAL MATCH (fn)-[out:RPC_CALLS]->()
+      OPTIONAL MATCH ()-[inc:RPC_CALLS]->(fn)
+      DELETE out, inc
+      REMOVE fn.rpcCallerServices, fn.rpcCallerMethods,
+             fn.rpcHandlerService, fn.rpcHandlerMethod
+    `,
+    params: { filePaths },
+  };
+}
+
 export function batchUpsertProtoDefs(items: Array<{
   serviceName: string;
   methodName: string;

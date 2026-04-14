@@ -17,30 +17,50 @@ function identifierTokens(text: string): string[] {
   return text.split(/[^A-Za-z0-9_]+/).filter(Boolean);
 }
 
-function serviceReceiverAliases(serviceName: string): string[] {
-  const aliases = new Set<string>([serviceName]);
+function serviceNameTokens(serviceName: string): string[] {
+  let name = serviceName;
   for (const suffix of ["Client", "Stub", "Server", "Service"]) {
-    if (serviceName.endsWith(suffix) && serviceName.length > suffix.length) {
-      aliases.add(serviceName.slice(0, -suffix.length));
+    if (name.endsWith(suffix) && name.length > suffix.length) {
+      name = name.slice(0, -suffix.length);
+      break;
     }
   }
-  return [...aliases];
+  const parts = name.match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) ?? [];
+  return parts.map((p) => p.toLowerCase());
 }
 
-function pickByReceiver<T extends { serviceName: string; methodName: string }>(
+function pickByReceiver<T extends { serviceName: string }>(
   objText: string,
   defs: T[]
 ): T | null {
-  const tokensLower = identifierTokens(objText).map((t) => t.toLowerCase());
-  let match: T | null = null;
+  const receiverTokens = new Set(identifierTokens(objText).flatMap((t) => {
+    // Split receiver tokens by CamelCase too, so camelCase receivers tokenize
+    // the same way snake_case ones do.
+    const subs = t.match(/[A-Z][a-z0-9]*|[a-z0-9]+/g) ?? [t];
+    return subs.map((s) => s.toLowerCase());
+  }));
+
+  let best: T | null = null;
+  let bestScore = 0;
+  let tied = false;
   for (const def of defs) {
-    const aliases = serviceReceiverAliases(def.serviceName).map((a) => a.toLowerCase());
-    if (aliases.some((a) => tokensLower.includes(a))) {
-      if (match && match.serviceName !== def.serviceName) return null; // ambiguous → skip
-      match = def;
+    const nameTokens = serviceNameTokens(def.serviceName);
+    if (nameTokens.length === 0) continue;
+    let score = 0;
+    for (const nt of nameTokens) {
+      if (receiverTokens.has(nt)) score++;
+    }
+    if (score === 0) continue;
+    if (score > bestScore) {
+      best = def;
+      bestScore = score;
+      tied = false;
+    } else if (score === bestScore && best && best.serviceName !== def.serviceName) {
+      tied = true;
     }
   }
-  return match;
+  if (tied) return null;
+  return best;
 }
 
 // --- Gate checks: does this file import gRPC-generated code? ---

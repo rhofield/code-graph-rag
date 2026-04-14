@@ -93,6 +93,29 @@ describe("RPC Detector — Python", () => {
     expect(callers[0].serviceName).toBe("UserService");
     expect(callers[0].methodName).toBe("GetUser");
   });
+
+  it("disambiguates snake_case receiver by most-specific-token-match", async () => {
+    const ambiguousReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (Req) returns (Resp);
+      }
+      service UserServiceHelper {
+        rpc GetUser (Req) returns (Resp);
+      }
+    `, "/protos/ambiguous.proto", ambiguousReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "python-ambiguous.py"));
+    const ann = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "python-ambiguous.py", ambiguousReg);
+    parsed!.tree.delete();
+
+    const callers = ann.filter((a) => a.role === "caller");
+    expect(callers).toHaveLength(1);
+    expect(callers[0].serviceName).toBe("UserServiceHelper");
+    expect(callers[0].methodName).toBe("GetUser");
+  });
 });
 
 describe("RPC Detector — TypeScript", () => {

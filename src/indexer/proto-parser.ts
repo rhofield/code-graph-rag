@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProtoRegistry } from "./proto-registry.js";
 
-function toCamelCase(s: string): string {
+function lowerFirst(s: string): string {
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
@@ -48,7 +48,7 @@ export function parseProtoSource(
       registry.register({
         serviceName,
         methodName: rpcMatch[1],
-        methodCamel: toCamelCase(rpcMatch[1]),
+        methodCamel: lowerFirst(rpcMatch[1]),
         requestType: rpcMatch[2],
         responseType: rpcMatch[3],
         packageName,

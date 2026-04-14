@@ -24,6 +24,9 @@ export async function setupSchema(db: DbConnection): Promise<void> {
     await session.run(
       "CREATE INDEX file_language IF NOT EXISTS FOR (f:File) ON (f.language)"
     );
+    await session.run(
+      "CREATE INDEX function_rpc_handler IF NOT EXISTS FOR (f:Function) ON (f.rpcHandlerService, f.rpcHandlerMethod)"
+    );
 
     // Full-text index for search_code
     await session.run(`

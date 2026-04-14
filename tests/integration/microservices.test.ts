@@ -1,6 +1,7 @@
 // tests/integration/microservices.test.ts
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
+import fs from "node:fs/promises";
 import { createConnection } from "../../src/db/connection.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { indexRepository, createProtoRegistry } from "../../src/indexer/index.js";
@@ -132,6 +133,105 @@ describe.skipIf(!INTEGRATION)("gRPC monorepo integration", () => {
       expect(res.records[0].get("rpcEdges").toNumber()).toBe(0);
     } finally {
       await session.close();
+    }
+  });
+
+  it("removes stale RPC_CALLS edges when caller switches RPCs on re-index", async () => {
+    const tmpRoot = resolve("tests/fixtures/grpc/_tmp-stale-edge");
+    await fs.mkdir(tmpRoot, { recursive: true });
+    await fs.writeFile(
+      resolve(tmpRoot, "user.proto"),
+      `syntax = "proto3";
+package user.v1;
+service UserService {
+  rpc GetUser (Req) returns (Resp);
+  rpc CreateUser (Req) returns (Resp);
+}
+message Req {}
+message Resp {}
+`
+    );
+    await fs.writeFile(
+      resolve(tmpRoot, "handler.go"),
+      `package main
+
+import (
+\t"context"
+\tpb "myproject/proto/user/v1"
+)
+
+type UserServiceServer struct {
+\tpb.UnimplementedUserServiceServer
+}
+
+func (s *UserServiceServer) GetUser(ctx context.Context, req *pb.Req) (*pb.Resp, error) {
+\treturn &pb.Resp{}, nil
+}
+
+func (s *UserServiceServer) CreateUser(ctx context.Context, req *pb.Req) (*pb.Resp, error) {
+\treturn &pb.Resp{}, nil
+}
+`
+    );
+    const callerPath = resolve(tmpRoot, "caller.go");
+    await fs.writeFile(
+      callerPath,
+      `package main
+
+import (
+\t"context"
+\tpb "myproject/proto/user/v1"
+)
+
+func invoke(ctx context.Context, c pb.UserServiceClient) {
+\tc.GetUser(ctx, &pb.Req{})
+}
+`
+    );
+    try {
+      await indexRepository(db, tmpRoot, DEFAULT_CONFIG.index);
+
+      await fs.writeFile(
+        callerPath,
+        `package main
+
+import (
+\t"context"
+\tpb "myproject/proto/user/v1"
+)
+
+func invoke(ctx context.Context, c pb.UserServiceClient) {
+\tc.CreateUser(ctx, &pb.Req{})
+}
+`
+      );
+      await indexRepository(db, tmpRoot, DEFAULT_CONFIG.index);
+
+      const session = db.session();
+      try {
+        const r = await session.run(
+          `
+          MATCH (caller:Function {name: "invoke"})-[e:RPC_CALLS]->(handler:Function)
+          WHERE caller.filePath CONTAINS '_tmp-stale-edge'
+            AND handler.filePath CONTAINS '_tmp-stale-edge'
+          RETURN collect(e.methodName) AS methods
+        `
+        );
+        const methods = r.records[0]?.get("methods") ?? [];
+        expect(methods).toEqual(["CreateUser"]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      const session = db.session();
+      try {
+        await session.run(
+          "MATCH (n) WHERE n.filePath CONTAINS '_tmp-stale-edge' DETACH DELETE n"
+        );
+      } finally {
+        await session.close();
+      }
+      await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
 });

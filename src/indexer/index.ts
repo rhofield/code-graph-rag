@@ -384,8 +384,10 @@ export async function indexRepository(
   }
 
   // Link RPC edges from annotations
-  if (allRpcAnnotations.length > 0) {
-    result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations);
+  const erroredPaths = new Set(result.errors.map((e) => e.file));
+  const touchedFilePaths = files.filter((f) => !erroredPaths.has(f));
+  if (touchedFilePaths.length > 0 || allRpcAnnotations.length > 0) {
+    result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations, touchedFilePaths);
   }
 
   // Orphan cleanup: remove File nodes that exist in the graph under our scope

@@ -4,16 +4,21 @@ import {
   batchSetRpcHandlerMeta,
   batchSetRpcCallerMeta,
   resolveRpcEdges,
+  clearRpcMetaForFiles,
 } from "../db/queries.js";
 
 export async function linkRpcEdges(
   db: DbConnection,
-  annotations: RpcAnnotation[]
+  annotations: RpcAnnotation[],
+  touchedFilePaths: string[] = []
 ): Promise<number> {
-  if (annotations.length === 0) return 0;
-
   const session = db.session();
   try {
+    if (touchedFilePaths.length > 0) {
+      const clearQ = clearRpcMetaForFiles(touchedFilePaths);
+      await session.run(clearQ.cypher, clearQ.params);
+    }
+    if (annotations.length === 0) return 0;
     const handlers = annotations.filter((a) => a.role === "handler");
     const callers = annotations.filter((a) => a.role === "caller");
 

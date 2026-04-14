@@ -420,16 +420,18 @@ export function loadAllProtoDefs(): CypherQuery {
 }
 
 export function batchDeleteOrphanProtoMethods(
-  keep: Array<{ serviceName: string; methodName: string }>
+  keep: Array<{ serviceName: string; methodName: string }>,
+  protoFilePathPrefix: string
 ): CypherQuery {
   return {
     cypher: `
       WITH [k IN $keep | k.serviceName + "::" + k.methodName] AS keepKeys
       MATCH (m:ProtoMethod)
-      WHERE NOT (m.serviceName + "::" + m.methodName) IN keepKeys
+      WHERE m.protoFile STARTS WITH $protoFilePathPrefix
+        AND NOT (m.serviceName + "::" + m.methodName) IN keepKeys
       DETACH DELETE m
     `,
-    params: { keep },
+    params: { keep, protoFilePathPrefix },
   };
 }
 

@@ -273,6 +273,43 @@ func invoke(ctx context.Context, c pb.UserServiceClient) {
       await fs.rm(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  it("does not wipe ProtoMethod nodes when a repo has a malformed or service-less .proto", async () => {
+    const tmpRoot = resolve("tests/fixtures/grpc/_tmp-empty-proto");
+    await fs.mkdir(tmpRoot, { recursive: true });
+    // .proto with no service block — parser finds zero methods
+    await fs.writeFile(resolve(tmpRoot, "empty.proto"), `
+      syntax = "proto3";
+      package empty;
+      message Foo { string bar = 1; }
+    `);
+
+    // Seed an unrelated ProtoMethod that should survive
+    const seedSession = db.session();
+    try {
+      await seedSession.run(`
+        MERGE (m:ProtoMethod {serviceName: "SurvivorService", methodName: "SurvivorMethod"})
+        SET m.protoFile = "/some/other/repo/survivor.proto"
+      `);
+    } finally {
+      await seedSession.close();
+    }
+
+    await indexRepository(db, tmpRoot, DEFAULT_CONFIG.index);
+
+    const session = db.session();
+    try {
+      const r = await session.run(
+        `MATCH (m:ProtoMethod {serviceName: "SurvivorService", methodName: "SurvivorMethod"}) RETURN count(m) AS c`
+      );
+      expect(r.records[0].get("c").toNumber()).toBe(1);
+      // Cleanup seeded node
+      await session.run(`MATCH (m:ProtoMethod {serviceName: "SurvivorService"}) DETACH DELETE m`);
+    } finally {
+      await session.close();
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {

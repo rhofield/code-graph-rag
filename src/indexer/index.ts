@@ -237,19 +237,26 @@ export async function indexRepository(
   // On single-repo full index runs, prune ProtoMethod nodes that no longer exist
   // in any parsed proto. Skip for changedOnly (incomplete proto coverage) and for
   // workspace runs (options.protoRegistry set — pruning would wipe other repos' defs).
-  if (!options.changedOnly && protoFiles.length > 0 && !options.protoRegistry) {
+  if (
+    !options.changedOnly &&
+    !options.specificPath &&
+    protoFiles.length > 0 &&
+    !options.protoRegistry
+  ) {
     const keep = registry.getAllServices().flatMap((svc) =>
       registry.getServiceMethods(svc).map((d) => ({
         serviceName: d.serviceName,
         methodName: d.methodName,
       }))
     );
-    const session = db.session();
-    try {
-      const q = batchDeleteOrphanProtoMethods(keep);
-      await session.run(q.cypher, q.params);
-    } finally {
-      await session.close();
+    if (keep.length > 0) {
+      const session = db.session();
+      try {
+        const q = batchDeleteOrphanProtoMethods(keep, absRoot);
+        await session.run(q.cypher, q.params);
+      } finally {
+        await session.close();
+      }
     }
   }
 

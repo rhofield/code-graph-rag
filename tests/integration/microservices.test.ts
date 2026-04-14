@@ -467,6 +467,58 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
     }
   });
 
+  it("picks up cross-repo RPC edges even when caller repo is indexed before proto repo", async () => {
+    const base = resolve("tests/fixtures/grpc/multirepo");
+    const callerRepo = resolve(base, "service-a");
+    const protoRepo = resolve(base, "proto-repo");
+    const handlerRepo = resolve(base, "service-b");
+
+    // Clean slate: this describe block does not have a per-test beforeEach,
+    // and prior tests in the block leave multirepo nodes (and ProtoMethods)
+    // in the shared DB. Mirror the cleanup used by the graph-hydration test.
+    const cleanupSession = db.session();
+    try {
+      await cleanupSession.run("MATCH (n) WHERE n.filePath CONTAINS 'multirepo' DETACH DELETE n");
+      await cleanupSession.run("MATCH (m:ProtoMethod) DETACH DELETE m");
+    } finally {
+      await cleanupSession.close();
+    }
+
+    // Index caller first → no registry entries, no annotations, no edges yet.
+    await indexRepository(db, callerRepo, DEFAULT_CONFIG.index);
+
+    let session = db.session();
+    try {
+      // Scoped to the caller repo: other tests in this file may leave
+      // RPC_CALLS edges outside the multirepo fixtures (and our own
+      // cleanup intentionally leaves those alone).
+      const r1 = await session.run(
+        `MATCH (c:Function)-[e:RPC_CALLS]->()
+         WHERE c.filePath STARTS WITH $callerRepo
+         RETURN count(e) AS c`,
+        { callerRepo }
+      );
+      expect(r1.records[0].get("c").toNumber()).toBe(0);
+    } finally { await session.close(); }
+
+    // Then proto repo + handler repo.
+    await indexRepository(db, protoRepo, DEFAULT_CONFIG.index);
+    await indexRepository(db, handlerRepo, DEFAULT_CONFIG.index);
+
+    // Re-index caller; hydration now sees protos from graph.
+    await indexRepository(db, callerRepo, DEFAULT_CONFIG.index);
+
+    session = db.session();
+    try {
+      const r2 = await session.run(`
+        MATCH (c:Function)-[:RPC_CALLS]->(h:Function)
+        WHERE c.filePath STARTS WITH $callerRepo
+        RETURN count(*) AS c
+      `, { callerRepo });
+      expect(r2.records[0].get("c").toNumber()).toBeGreaterThan(0);
+    } finally { await session.close(); }
+  });
+
   it("indexWorkspace resolves cross-repo edges with config.repos-style paths", async () => {
     const session0 = db.session();
     try {

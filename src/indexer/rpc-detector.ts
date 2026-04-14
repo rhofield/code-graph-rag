@@ -296,11 +296,33 @@ function detectTypeScriptHandlers(root: Parser.SyntaxNode, source: string, fileP
 
 function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
   function walkFns(node: Parser.SyntaxNode): void {
-    if (node.type === "function_declaration" || node.type === "arrow_function" || node.type === "method_definition") {
+    // Named arrow / function-expression assigned to a const/let: pull the name
+    // from the variable_declarator; the arrow itself has no `name` field.
+    if (node.type === "variable_declarator") {
+      const nameNode = node.childForFieldName("name");
+      const valueNode = node.childForFieldName("value");
+      if (
+        nameNode &&
+        valueNode &&
+        (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
+      ) {
+        const body = valueNode.childForFieldName("body");
+        if (body) findCallsInBody(body, source, getNodeText(nameNode, source), filePath, registry, out);
+        return;
+      }
+    }
+
+    if (node.type === "function_declaration" || node.type === "method_definition") {
       const nameNode = node.childForFieldName("name");
       if (nameNode) findCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
       return;
     }
+
+    // Anonymous/unnamed arrow functions: skip — previously matched but had null name.
+    if (node.type === "arrow_function" || node.type === "function_expression") {
+      return;
+    }
+
     for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
   }
   walkFns(root);

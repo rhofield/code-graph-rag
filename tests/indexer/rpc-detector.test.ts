@@ -115,10 +115,21 @@ describe("RPC Detector — TypeScript", () => {
     parsed!.tree.delete();
 
     const callers = annotations.filter((a) => a.role === "caller");
-    expect(callers).toHaveLength(1);
-    expect(callers[0].functionName).toBe("loadUser");
-    expect(callers[0].serviceName).toBe("UserService");
-    expect(callers[0].methodName).toBe("GetUser");
+    const loadUserCaller = callers.find((c) => c.functionName === "loadUser");
+    expect(loadUserCaller).toBeDefined();
+    expect(loadUserCaller!.serviceName).toBe("UserService");
+    expect(loadUserCaller!.methodName).toBe("GetUser");
+  });
+
+  it("detects caller inside a named arrow function (const name = () => ...)", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-caller.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-caller.ts", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    const createUserCaller = callers.find((c) => c.functionName === "createUser");
+    expect(createUserCaller).toBeDefined();
+    expect(createUserCaller!.methodName).toBe("CreateUser");
   });
 });
 

@@ -332,20 +332,33 @@ export function batchDeleteOrphanFiles(filePaths: string[]): CypherQuery {
 }
 
 /**
- * Delete a Repository node, every File under it, and all Function/Class
- * children of those files. Used when a previously-known subrepo is no longer
- * present (its .git directory was removed or the directory itself was deleted).
+ * Delete a Repository node, every File under it (via CONTAINS_FILE), their
+ * Function/Class children, and any ProtoMethod nodes keyed to .proto files
+ * inside the repo. Used when a previously-known subrepo is no longer present.
+ *
+ * Using the CONTAINS_FILE relationship (rather than a path prefix on File)
+ * avoids accidentally matching sibling repos whose paths share a prefix
+ * (e.g. /root/svc-a vs /root/svc-a-old).
+ *
+ * ProtoMethod nodes are matched by protoFile prefix with a trailing separator
+ * for the same reason.
+ *
+ * Inbound RPC_CALLS from surviving cross-repo callers are severed by
+ * DETACH DELETE of the handler functions; re-indexing the caller repo
+ * re-links them.
  */
 export function deleteRepositoryAndFiles(data: { repoPath: string }): CypherQuery {
+  const repoPathWithSep = data.repoPath.endsWith("/") ? data.repoPath : data.repoPath + "/";
   return {
     cypher: `
       OPTIONAL MATCH (r:Repository {path: $repoPath})
-      OPTIONAL MATCH (f:File) WHERE f.path STARTS WITH $repoPath
+      OPTIONAL MATCH (r)-[:CONTAINS_FILE]->(f:File)
       OPTIONAL MATCH (f)-[:CONTAINS]->(child)
       OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
-      DETACH DELETE method, child, f, r
+      OPTIONAL MATCH (pm:ProtoMethod) WHERE pm.protoFile STARTS WITH $repoPathWithSep
+      DETACH DELETE method, child, f, pm, r
     `,
-    params: data,
+    params: { repoPath: data.repoPath, repoPathWithSep },
   };
 }
 

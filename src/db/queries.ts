@@ -331,6 +331,24 @@ export function batchDeleteOrphanFiles(filePaths: string[]): CypherQuery {
   };
 }
 
+/**
+ * Delete a Repository node, every File under it, and all Function/Class
+ * children of those files. Used when a previously-known subrepo is no longer
+ * present (its .git directory was removed or the directory itself was deleted).
+ */
+export function deleteRepositoryAndFiles(data: { repoPath: string }): CypherQuery {
+  return {
+    cypher: `
+      OPTIONAL MATCH (r:Repository {path: $repoPath})
+      OPTIONAL MATCH (f:File) WHERE f.path STARTS WITH $repoPath
+      OPTIONAL MATCH (f)-[:CONTAINS]->(child)
+      OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
+      DETACH DELETE method, child, f, r
+    `,
+    params: data,
+  };
+}
+
 export function batchSetRpcHandlerMeta(items: Array<{
   functionName: string;
   filePath: string;

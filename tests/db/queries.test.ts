@@ -10,6 +10,7 @@ import {
   deleteFileAndRelationships,
   upsertRepositoryWithCommit,
   getRepositoryCommit,
+  deleteRepositoryAndFiles,
 } from "../../src/db/queries.js";
 
 describe("query builders", () => {
@@ -110,5 +111,14 @@ describe("query builders", () => {
     const { cypher, params } = getRepositoryCommit({ path: "/project" });
     expect(cypher).toContain("lastIndexedCommit");
     expect(params.path).toBe("/project");
+  });
+});
+
+describe("deleteRepositoryAndFiles", () => {
+  it("returns a query scoped to the given repo path", () => {
+    const q = deleteRepositoryAndFiles({ repoPath: "/abs/root/svc-a" });
+    expect(q.cypher).toContain("STARTS WITH $repoPath");
+    expect(q.cypher).toContain("DETACH DELETE");
+    expect(q.params).toEqual({ repoPath: "/abs/root/svc-a" });
   });
 });

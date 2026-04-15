@@ -52,6 +52,19 @@ That's it. Claude Code and Cursor will now have access to the graph tools for th
 
 ---
 
+## Multi-repo root (microservices)
+
+If you run `rho-graph init` or `index` from a directory that is not itself a git repo but contains microservice repos as subdirectories, rho-graph walks the tree to find them (any dir containing `.git/` is treated as a repo; walk stops at found repos and at `index.exclude` dirs like `node_modules`). The discovered list is written to `.rho-graph.json` and refreshed every 24h (configurable via `discovery.ttlHours`).
+
+Force a refresh manually:
+
+```bash
+rho-graph discover            # walks and updates .rho-graph.json
+rho-graph discover --dry-run  # preview changes, write nothing
+```
+
+---
+
 ## CLI reference
 
 | Command | Description |

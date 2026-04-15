@@ -1,12 +1,16 @@
 // tests/integration/microservices.test.ts
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import fs from "node:fs/promises";
+import { mkdirSync, rmSync, existsSync, cpSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createConnection } from "../../src/db/connection.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { indexRepository, createProtoRegistry } from "../../src/indexer/index.js";
 import { indexWorkspace } from "../../src/indexer/workspace.js";
-import { DEFAULT_CONFIG } from "../../src/config.js";
+import { DEFAULT_CONFIG, loadConfig } from "../../src/config.js";
+import { resolveRepos } from "../../src/indexer/resolve-repos.js";
+import { removeRepoFromGraph } from "../../src/indexer/graph-cleanup.js";
 
 const INTEGRATION = !!process.env.INTEGRATION;
 
@@ -582,6 +586,111 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
         RETURN count(r) AS count
       `);
       expect(res.records[0].get("count").toNumber()).toBeGreaterThan(0);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+describe.skipIf(!INTEGRATION)("pure-container discovery integration", () => {
+  let db: ReturnType<typeof createConnection>;
+  let tmpRoot: string;
+
+  beforeAll(async () => {
+    db = createConnection({
+      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
+      username: process.env.NEO4J_USERNAME ?? "neo4j",
+      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
+    });
+    await setupSchema(db);
+
+    // Build a pure-container: two existing fixture microservices copied into
+    // a fresh temp root, with .git dirs added to simulate real repos.
+    tmpRoot = join(tmpdir(), `pure-container-${Date.now()}`);
+    mkdirSync(tmpRoot, { recursive: true });
+    for (const svc of ["auth-service", "user-service"]) {
+      const src = resolve("tests/fixtures/microservices", svc);
+      const dst = join(tmpRoot, svc);
+      cpSync(src, dst, { recursive: true });
+      mkdirSync(join(dst, ".git"), { recursive: true });
+    }
+
+    // Clean any prior graph nodes that might alias these paths.
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root: tmpRoot });
+      await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root: tmpRoot });
+    } finally {
+      await session.close();
+    }
+  });
+
+  afterAll(async () => {
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root: tmpRoot });
+      await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root: tmpRoot });
+    } finally {
+      await session.close();
+    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+    await db.close();
+  });
+
+  it("discovers subrepos and indexes each as its own Repository node", async () => {
+    const config = loadConfig(tmpRoot);
+    const resolved = await resolveRepos({
+      workspaceRoot: tmpRoot,
+      config,
+      removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
+    });
+    expect(resolved.mode).toBe("workspace");
+    expect(resolved.repos.map((r) => r.path).sort()).toEqual(["auth-service", "user-service"]);
+
+    const result = await indexWorkspace(db, tmpRoot, resolved.repos, DEFAULT_CONFIG.index);
+    expect(result.repos.length).toBe(2);
+
+    const session = db.session();
+    try {
+      const res = await session.run(
+        "MATCH (r:Repository) WHERE r.path STARTS WITH $root RETURN r.path AS path ORDER BY path",
+        { root: tmpRoot }
+      );
+      const paths = res.records.map((r) => r.get("path") as string);
+      expect(paths).toEqual([join(tmpRoot, "auth-service"), join(tmpRoot, "user-service")]);
+    } finally {
+      await session.close();
+    }
+
+    // .rho-graph.json was written
+    expect(existsSync(join(tmpRoot, ".rho-graph.json"))).toBe(true);
+  });
+
+  it("removes the Repository node when a subrepo's .git disappears", async () => {
+    // Remove .git from user-service, then re-resolve with force
+    rmSync(join(tmpRoot, "user-service", ".git"), { recursive: true, force: true });
+    const config = loadConfig(tmpRoot);
+    const resolved = await resolveRepos({
+      workspaceRoot: tmpRoot,
+      config,
+      force: true,
+      removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
+    });
+    expect(resolved.repos.map((r) => r.path)).toEqual(["auth-service"]);
+    expect(resolved.removed).toEqual(["user-service"]);
+
+    const session = db.session();
+    try {
+      const res = await session.run(
+        "MATCH (r:Repository) WHERE r.path = $p RETURN count(r) AS c",
+        { p: join(tmpRoot, "user-service") }
+      );
+      expect(res.records[0].get("c").toNumber()).toBe(0);
+      const files = await session.run(
+        "MATCH (f:File) WHERE f.path STARTS WITH $p RETURN count(f) AS c",
+        { p: join(tmpRoot, "user-service") }
+      );
+      expect(files.records[0].get("c").toNumber()).toBe(0);
     } finally {
       await session.close();
     }

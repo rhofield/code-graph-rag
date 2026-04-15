@@ -3,8 +3,9 @@ import { Command } from "commander";
 import ora from "ora";
 import { resolve } from "node:path";
 import { loadConfig } from "../../config.js";
+import type { RepoEntry } from "../../config.js";
 import { createConnection } from "../../db/connection.js";
-import { removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
+import { printResolveResult, removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
 import { indexRepository } from "../../indexer/index.js";
 import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
@@ -25,7 +26,7 @@ export function registerIndexCommand(program: Command): void {
       const concurrency = parseInt(opts.concurrency, 10);
       const maxMemoryMB = parseInt(opts.maxMemory, 10);
 
-      let repos = config.repos;
+      let repos: RepoEntry[] = [];
       let useWorkspace = false;
 
       if (!opts.repo && !opts.path) {
@@ -36,9 +37,7 @@ export function registerIndexCommand(program: Command): void {
         });
         repos = resolved.repos;
         useWorkspace = resolved.mode === "workspace";
-        if (resolved.warning) console.warn(resolved.warning);
-        if (resolved.added.length > 0) console.log(`Discovered new repos: ${resolved.added.join(", ")}`);
-        if (resolved.removed.length > 0) console.log(`Removed missing repos: ${resolved.removed.join(", ")}`);
+        printResolveResult(resolved);
       }
 
       if (useWorkspace) {

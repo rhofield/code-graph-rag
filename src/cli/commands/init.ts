@@ -11,7 +11,7 @@ import {
   startNeo4j,
   waitForNeo4j,
 } from "../../docker/neo4j.js";
-import { removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
+import { printResolveResult, removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
 import { indexRepository } from "../../indexer/index.js";
 import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
@@ -53,9 +53,7 @@ export async function runInit(): Promise<void> {
     config,
     removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
   });
-  if (resolved.warning) console.warn(resolved.warning);
-  if (resolved.added.length > 0) console.log(`Discovered new repos: ${resolved.added.join(", ")}`);
-  if (resolved.removed.length > 0) console.log(`Removed missing repos: ${resolved.removed.join(", ")}`);
+  printResolveResult(resolved);
 
   if (resolved.mode === "workspace") {
     const wsSpinner = ora(`Indexing workspace (${resolved.repos.length} repos)...`).start();

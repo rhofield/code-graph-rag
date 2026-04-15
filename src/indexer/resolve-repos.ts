@@ -62,22 +62,50 @@ export async function resolveRepos(args: ResolveReposArgs): Promise<ResolveRepos
 
   // Stored paths no longer discovered → removed.
   const removedEntries = config.repos.filter((r) => !discoveredPaths.has(r.path));
+  const failedRemovals: { path: string; error: string }[] = [];
   for (const r of removedEntries) {
-    await removeRepoFromGraph(resolve(workspaceRoot, r.path));
+    try {
+      await removeRepoFromGraph(resolve(workspaceRoot, r.path));
+    } catch (err) {
+      failedRemovals.push({ path: r.path, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // Re-include failed removals in merged so the config keeps tracking them
+  // (and we retry next run instead of silently dropping them from state).
+  const failedPaths = new Set(failedRemovals.map((f) => f.path));
+  if (failedPaths.size > 0) {
+    for (const r of removedEntries) {
+      if (failedPaths.has(r.path)) {
+        merged.push(existingByPath.get(r.path) ?? { path: r.path });
+      }
+    }
   }
 
   const added = discovered
     .map((d) => d.path)
     .filter((p) => !existingByPath.has(p));
-  const removed = removedEntries.map((r) => r.path);
+  const removed = removedEntries
+    .filter((r) => !failedPaths.has(r.path))
+    .map((r) => r.path);
+
+  const warnings: string[] = [];
+  if (failedRemovals.length > 0) {
+    warnings.push(
+      `Failed to remove from graph: ${failedRemovals.map((f) => f.path).join(", ")}. Will retry next run.`
+    );
+  }
 
   if (merged.length === 0) {
+    warnings.unshift(
+      `No git subrepos discovered under ${workspaceRoot}. Falling back to single-repo mode.`
+    );
     return {
       repos: [],
       mode: "single",
       added,
       removed,
-      warning: `No git subrepos discovered under ${workspaceRoot}. Falling back to single-repo mode.`,
+      warning: warnings.join(" "),
     };
   }
 
@@ -86,5 +114,11 @@ export async function resolveRepos(args: ResolveReposArgs): Promise<ResolveRepos
     lastDiscoveredAt: now.toISOString(),
   });
 
-  return { repos: merged, mode: "workspace", added, removed };
+  return {
+    repos: merged,
+    mode: "workspace",
+    added,
+    removed,
+    ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+  };
 }

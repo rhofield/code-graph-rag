@@ -134,6 +134,44 @@ describe("resolveRepos", () => {
     expect(repos.map((r) => r.path).sort()).toEqual(["svc-a", "svc-b"]);
   });
 
+  it("retains failed-removal repos in config and surfaces a warning", async () => {
+    // svc-a still present, svc-b and svc-c had .git removed; svc-b's cleanup throws.
+    mkRepo(join(root, "svc-a"));
+    mkdirSync(join(root, "svc-b"), { recursive: true });
+    mkdirSync(join(root, "svc-c"), { recursive: true });
+    const { repos, removed, warning } = await resolveRepos({
+      workspaceRoot: root,
+      config: {
+        ...DEFAULT_CONFIG,
+        repos: [
+          { path: "svc-a" },
+          { path: "svc-b", name: "service-b" },
+          { path: "svc-c" },
+        ],
+        lastDiscoveredAt: "2026-04-14T00:00:00.000Z", // stale
+      },
+      now: new Date("2026-04-16T00:00:00Z"),
+      removeRepoFromGraph: async (absPath) => {
+        if (absPath.endsWith("/svc-b")) throw new Error("boom");
+      },
+    });
+
+    // saveConfig should still be called — verify by reading the written file.
+    const written = JSON.parse(readFileSync(join(root, ".rho-graph.json"), "utf-8"));
+    expect(written.repos.map((r: { path: string }) => r.path).sort()).toEqual(["svc-a", "svc-b"]);
+    // svc-b retains its name
+    const writtenB = written.repos.find((r: { path: string }) => r.path === "svc-b");
+    expect(writtenB.name).toBe("service-b");
+
+    // merged result includes the failed repo
+    expect(repos.map((r) => r.path).sort()).toEqual(["svc-a", "svc-b"]);
+    // removed list excludes the failed one (svc-c succeeded)
+    expect(removed).toEqual(["svc-c"]);
+    // warning mentions the failed path
+    expect(warning).toMatch(/svc-b/);
+    expect(warning).toMatch(/retry/i);
+  });
+
   it("short-circuits to single mode when root is a git worktree (.git is a file)", async () => {
     writeFileSync(join(root, ".git"), "gitdir: /some/other/path/worktrees/x\n");
     const { repos, mode, warning } = await resolveRepos({

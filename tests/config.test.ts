@@ -44,4 +44,31 @@ describe("loadConfig", () => {
     expect(config.neo4j.uri).toBe("bolt://env-host:7687");
     delete process.env.NEO4J_URI;
   });
+
+  it("applies default discovery settings", () => {
+    const config = loadConfig(tempDir);
+    expect(config.discovery.ttlHours).toBe(24);
+    expect(config.discovery.maxDepth).toBe(6);
+    expect(config.lastDiscoveredAt).toBeUndefined();
+  });
+
+  it("merges user-supplied discovery overrides", () => {
+    writeFileSync(
+      join(tempDir, ".rho-graph.json"),
+      JSON.stringify({ discovery: { ttlHours: 1 } })
+    );
+    const config = loadConfig(tempDir);
+    expect(config.discovery.ttlHours).toBe(1);
+    expect(config.discovery.maxDepth).toBe(6); // default preserved
+  });
+
+  it("reads lastDiscoveredAt when present", () => {
+    const iso = "2026-04-15T12:00:00.000Z";
+    writeFileSync(
+      join(tempDir, ".rho-graph.json"),
+      JSON.stringify({ lastDiscoveredAt: iso })
+    );
+    const config = loadConfig(tempDir);
+    expect(config.lastDiscoveredAt).toBe(iso);
+  });
 });

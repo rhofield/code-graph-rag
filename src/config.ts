@@ -20,10 +20,17 @@ export interface RepoEntry {
   name?: string;
 }
 
+export interface DiscoveryConfig {
+  ttlHours: number;
+  maxDepth: number;
+}
+
 export interface Config {
   neo4j: Neo4jConfig;
   index: IndexConfig;
   repos: RepoEntry[];
+  discovery: DiscoveryConfig;
+  lastDiscoveredAt?: string;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -71,6 +78,7 @@ export const DEFAULT_CONFIG: Config = {
     languages: "auto",
   },
   repos: [],
+  discovery: { ttlHours: 24, maxDepth: 6 },
 };
 
 function deepMerge(
@@ -86,6 +94,12 @@ function deepMerge(
   }
   if (override.repos) {
     result.repos = override.repos;
+  }
+  if (override.discovery) {
+    result.discovery = { ...result.discovery, ...override.discovery };
+  }
+  if (override.lastDiscoveredAt !== undefined) {
+    result.lastDiscoveredAt = override.lastDiscoveredAt;
   }
   return result;
 }

@@ -1,8 +1,7 @@
-import { join, resolve } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Config, RepoEntry } from "../config.js";
 import { saveConfig } from "../config.js";
-import { discoverRepos } from "./discover.js";
+import { discoverRepos, hasGitEntry } from "./discover.js";
 
 export type ResolveMode = "workspace" | "single";
 
@@ -22,12 +21,6 @@ export interface ResolveReposResult {
   warning?: string;
 }
 
-function rootIsGitRepo(root: string): boolean {
-  const g = join(root, ".git");
-  if (!existsSync(g)) return false;
-  try { return statSync(g).isDirectory(); } catch { return false; }
-}
-
 function isCacheFresh(
   lastDiscoveredAt: string | undefined,
   ttlHours: number,
@@ -44,7 +37,7 @@ export async function resolveRepos(args: ResolveReposArgs): Promise<ResolveRepos
   const { workspaceRoot, config, removeRepoFromGraph } = args;
   const now = args.now ?? new Date();
 
-  if (rootIsGitRepo(workspaceRoot)) {
+  if (hasGitEntry(workspaceRoot)) {
     return { repos: [], mode: "single", added: [], removed: [] };
   }
 
@@ -54,7 +47,7 @@ export async function resolveRepos(args: ResolveReposArgs): Promise<ResolveRepos
     isCacheFresh(config.lastDiscoveredAt, config.discovery.ttlHours, now);
 
   if (fresh) {
-    return { repos: config.repos, mode: "workspace", added: [], removed: [] };
+    return { repos: [...config.repos], mode: "workspace", added: [], removed: [] };
   }
 
   const discovered = discoverRepos(workspaceRoot, {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveRepos } from "../../src/indexer/resolve-repos.js";
@@ -132,5 +132,18 @@ describe("resolveRepos", () => {
       force: true,
     });
     expect(repos.map((r) => r.path).sort()).toEqual(["svc-a", "svc-b"]);
+  });
+
+  it("short-circuits to single mode when root is a git worktree (.git is a file)", async () => {
+    writeFileSync(join(root, ".git"), "gitdir: /some/other/path/worktrees/x\n");
+    const { repos, mode, warning } = await resolveRepos({
+      workspaceRoot: root,
+      config: DEFAULT_CONFIG,
+      now: new Date("2026-04-15T00:00:00Z"),
+      removeRepoFromGraph: async () => {},
+    });
+    expect(repos).toEqual([]);
+    expect(mode).toBe("single");
+    expect(warning).toBeUndefined();
   });
 });

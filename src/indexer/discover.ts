@@ -22,7 +22,7 @@ function isDir(p: string): boolean {
   }
 }
 
-function hasGitEntry(p: string): boolean {
+export function hasGitEntry(p: string): boolean {
   try {
     const s = lstatSync(join(p, ".git"));
     return s.isDirectory() || s.isFile();

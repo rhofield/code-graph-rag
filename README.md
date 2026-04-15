@@ -204,11 +204,17 @@ Config is resolved in this order (later values win):
     "exclude": ["node_modules", "dist", "vendor", ".git", "build", "__pycache__"],
     "languages": "auto"
   },
-  "repos": []
+  "repos": [],
+  "discovery": {
+    "ttlHours": 24,
+    "maxDepth": 6
+  }
 }
 ```
 
 `managed: true` means Neo4j is started automatically via Docker Compose. Set to `false` to connect to an existing instance.
+
+`discovery` controls the multi-repo walk (see [Multi-repo root](#multi-repo-root-microservices)). `repos` and `lastDiscoveredAt` are managed by `rho-graph discover`; you can pre-seed `repos` manually if you want to override the auto-walk.
 
 ### Environment variable overrides
 

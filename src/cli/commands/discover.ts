@@ -4,7 +4,7 @@ import { loadConfig } from "../../config.js";
 import { createConnection } from "../../db/connection.js";
 import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
-import { discoverRepos } from "../../indexer/discover.js";
+import { discoverRepos, hasGitEntry } from "../../indexer/discover.js";
 
 export function registerDiscoverCommand(program: Command): void {
   program
@@ -14,6 +14,11 @@ export function registerDiscoverCommand(program: Command): void {
     .action(async (opts) => {
       const workspaceRoot = resolve(".");
       const config = loadConfig(workspaceRoot);
+
+      if (hasGitEntry(workspaceRoot)) {
+        console.log(`${workspaceRoot} is itself a git repo; single-repo mode (nothing to discover).`);
+        return;
+      }
 
       if (opts.dryRun) {
         const discovered = discoverRepos(workspaceRoot, {

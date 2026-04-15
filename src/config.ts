@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -108,6 +108,20 @@ function loadJsonFile(filePath: string): Record<string, unknown> | null {
   if (!existsSync(filePath)) return null;
   const raw = readFileSync(filePath, "utf-8");
   return JSON.parse(raw);
+}
+
+export interface ConfigPatch {
+  repos?: RepoEntry[];
+  lastDiscoveredAt?: string;
+}
+
+export function saveConfig(repoRoot: string, patch: ConfigPatch): void {
+  const path = join(repoRoot, ".rho-graph.json");
+  const existing = (loadJsonFile(path) as Record<string, unknown> | null) ?? {};
+  const next: Record<string, unknown> = { ...existing };
+  if (patch.repos !== undefined) next.repos = patch.repos;
+  if (patch.lastDiscoveredAt !== undefined) next.lastDiscoveredAt = patch.lastDiscoveredAt;
+  writeFileSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
 }
 
 export function loadConfig(repoRoot: string): Config {

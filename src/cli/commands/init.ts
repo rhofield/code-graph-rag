@@ -68,7 +68,7 @@ export async function runInit(): Promise<void> {
     );
     if (result.errors.length > 0) {
       console.log(`\n${result.errors.length} files had errors:`);
-      for (const err of result.errors.slice(0, 5)) {
+      for (const err of result.errors.slice(0, 100)) {
         console.log(`  ${err.file}: ${err.error}`);
       }
     }
@@ -84,7 +84,7 @@ export async function runInit(): Promise<void> {
     );
     if (result.errors.length > 0) {
       console.log(`\n${result.errors.length} files had errors:`);
-      for (const err of result.errors.slice(0, 5)) {
+      for (const err of result.errors.slice(0, 100)) {
         console.log(`  ${err.file}: ${err.error}`);
       }
     }

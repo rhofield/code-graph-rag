@@ -333,6 +333,12 @@ export async function indexRepository(
     }
   }
 
+  // Separate yaml/yml files — the tree-sitter yaml grammar is ABI-incompatible
+  // with web-tree-sitter@0.24.x and throws on every file. Index them as File
+  // nodes only, without AST extraction, similar to how proto files are handled.
+  const yamlFiles = files.filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+  files = files.filter((f) => !f.endsWith(".yaml") && !f.endsWith(".yml"));
+
   const result: IndexResult = {
     filesIndexed: 0,
     functionsFound: 0,
@@ -347,15 +353,32 @@ export async function indexRepository(
   // Snapshot of what discovery returned, for orphan cleanup later. We capture
   // this before any post-discovery filtering so the cleanup compares against
   // the full set of files we *intend* to manage on this run.
-  const discoveredSet = options.changedOnly ? null : new Set(files);
+  const discoveredSet = options.changedOnly ? null : new Set([...files, ...yamlFiles]);
 
   await writeRepoOnce(db, absRoot);
 
   const concurrency = options.concurrency ?? 8;
   const maxMemoryBytes = (options.maxMemoryMB ?? 8192) * 1024 * 1024;
 
+  const batchWriter = new BatchGraphWriter(db, { filePathSet });
+
+  // Write yaml/yml files as File nodes (no AST extraction).
+  for (const f of yamlFiles) {
+    batchWriter.add(
+      { functions: [], classes: [], imports: [], calls: [] },
+      {
+        filePath: f,
+        relativePath: relative(absRoot, f),
+        repoPath: absRoot,
+        language: "yaml",
+        hash: computeFileHash(f),
+        lastModified: getFileMtime(f),
+      }
+    );
+  }
+  result.filesIndexed += yamlFiles.length;
+
   if (concurrency > 1) {
-    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     const pipelineResult = await runParallelPipeline({
       files,
       absRoot,
@@ -370,14 +393,13 @@ export async function indexRepository(
       onFlushProgress: options.onFlushProgress,
       rpcDetectFn,
     });
-    result.filesIndexed = pipelineResult.filesIndexed;
+    result.filesIndexed += pipelineResult.filesIndexed;
     result.functionsFound = pipelineResult.functionsFound;
     result.classesFound = pipelineResult.classesFound;
     result.errors = pipelineResult.errors;
     allRpcAnnotations = pipelineResult.rpcAnnotations;
   } else {
     // Sequential fallback
-    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       options.onProgress?.(i + 1, files.length, file);

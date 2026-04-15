@@ -8,6 +8,7 @@ import { registerInstallMcpCommand } from "./commands/install-mcp.js";
 import { registerInstallHookCommand } from "./commands/install-hook.js";
 import { registerQueryCommand } from "./commands/query.js";
 import { registerVisualizeCommand } from "./commands/visualize.js";
+import { registerDiscoverCommand } from "./commands/discover.js";
 
 const program = new Command();
 
@@ -26,6 +27,7 @@ registerInstallMcpCommand(program);
 registerInstallHookCommand(program);
 registerQueryCommand(program);
 registerVisualizeCommand(program);
+registerDiscoverCommand(program);
 
 program
   .command("mcp-serve")

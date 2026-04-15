@@ -1,4 +1,4 @@
-import { readdirSync, statSync, lstatSync, existsSync } from "node:fs";
+import { readdirSync, lstatSync } from "node:fs";
 import { join, relative, basename } from "node:path";
 
 export interface DiscoveredRepo {
@@ -22,19 +22,17 @@ function isDir(p: string): boolean {
   }
 }
 
-function hasGitDir(p: string): boolean {
+function hasGitEntry(p: string): boolean {
   try {
-    const g = join(p, ".git");
-    if (!existsSync(g)) return false;
-    const s = statSync(g);
-    return s.isDirectory();
+    const s = lstatSync(join(p, ".git"));
+    return s.isDirectory() || s.isFile();
   } catch {
     return false;
   }
 }
 
 export function discoverRepos(root: string, opts: DiscoverOptions): DiscoveredRepo[] {
-  if (hasGitDir(root)) return [];
+  if (hasGitEntry(root)) return [];
 
   const found: DiscoveredRepo[] = [];
   const excludeSet = new Set(opts.exclude);
@@ -56,7 +54,7 @@ export function discoverRepos(root: string, opts: DiscoverOptions): DiscoveredRe
       const child = join(abs, name);
       if (!isDir(child)) continue;
 
-      if (hasGitDir(child)) {
+      if (hasGitEntry(child)) {
         found.push({ path: relative(root, child), name: basename(child) });
         continue; // do not descend
       }

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { discoverRepos } from "../../src/indexer/discover.js";
-import { mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -66,5 +66,20 @@ describe("discoverRepos", () => {
     mkRepo(join(root, "svc-a")); // shouldn't be reported — we don't descend into root because root is a repo
     const found = discoverRepos(root, { exclude: [], maxDepth: 6 });
     expect(found).toEqual([]);
+  });
+
+  it("treats .git as a file (worktree case) as a valid repo", () => {
+    const svc = join(root, "worktree-svc");
+    mkdirSync(svc, { recursive: true });
+    writeFileSync(join(svc, ".git"), "gitdir: /some/other/path/worktrees/x\n");
+    const found = discoverRepos(root, { exclude: [], maxDepth: 6 });
+    expect(found.map((r) => r.path)).toEqual(["worktree-svc"]);
+  });
+
+  it("tolerates broken symlinks during walk", () => {
+    mkRepo(join(root, "real"));
+    symlinkSync("/nonexistent-target-xyz", join(root, "dangle"), "dir");
+    const found = discoverRepos(root, { exclude: [], maxDepth: 6 });
+    expect(found.map((r) => r.path)).toEqual(["real"]);
   });
 });

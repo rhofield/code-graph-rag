@@ -4,7 +4,9 @@ import ora from "ora";
 import { resolve } from "node:path";
 import { loadConfig } from "../../config.js";
 import { createConnection } from "../../db/connection.js";
+import { removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
 import { indexRepository } from "../../indexer/index.js";
+import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
 
 export function registerIndexCommand(program: Command): void {
@@ -23,14 +25,25 @@ export function registerIndexCommand(program: Command): void {
       const concurrency = parseInt(opts.concurrency, 10);
       const maxMemoryMB = parseInt(opts.maxMemory, 10);
 
-      // Workspace mode: iterate over config.repos with a shared ProtoRegistry.
-      // Skipped when --repo or --path is set, since those imply targeting a single repo.
-      const useWorkspace =
-        config.repos.length > 0 && !opts.repo && !opts.path;
+      let repos = config.repos;
+      let useWorkspace = false;
+
+      if (!opts.repo && !opts.path) {
+        const resolved = await resolveRepos({
+          workspaceRoot,
+          config,
+          removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
+        });
+        repos = resolved.repos;
+        useWorkspace = resolved.mode === "workspace";
+        if (resolved.warning) console.warn(resolved.warning);
+        if (resolved.added.length > 0) console.log(`Discovered new repos: ${resolved.added.join(", ")}`);
+        if (resolved.removed.length > 0) console.log(`Removed missing repos: ${resolved.removed.join(", ")}`);
+      }
 
       if (useWorkspace) {
-        const spinner = ora(`Indexing workspace (${config.repos.length} repos)...`).start();
-        const result = await indexWorkspace(db, workspaceRoot, config.repos, config.index, {
+        const spinner = ora(`Indexing workspace (${repos.length} repos)...`).start();
+        const result = await indexWorkspace(db, workspaceRoot, repos, config.index, {
           changedOnly: opts.changed,
           concurrency,
           maxMemoryMB,

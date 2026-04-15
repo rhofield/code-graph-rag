@@ -11,7 +11,9 @@ import {
   startNeo4j,
   waitForNeo4j,
 } from "../../docker/neo4j.js";
+import { removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
 import { indexRepository } from "../../indexer/index.js";
+import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,9 +48,18 @@ export async function runInit(): Promise<void> {
   await setupSchema(db);
   schemaSpinner.succeed("Schema ready");
 
-  if (config.repos.length > 0) {
-    const wsSpinner = ora(`Indexing workspace (${config.repos.length} repos)...`).start();
-    const result = await indexWorkspace(db, repoPath, config.repos, config.index, {
+  const resolved = await resolveRepos({
+    workspaceRoot: repoPath,
+    config,
+    removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
+  });
+  if (resolved.warning) console.warn(resolved.warning);
+  if (resolved.added.length > 0) console.log(`Discovered new repos: ${resolved.added.join(", ")}`);
+  if (resolved.removed.length > 0) console.log(`Removed missing repos: ${resolved.removed.join(", ")}`);
+
+  if (resolved.mode === "workspace") {
+    const wsSpinner = ora(`Indexing workspace (${resolved.repos.length} repos)...`).start();
+    const result = await indexWorkspace(db, repoPath, resolved.repos, config.index, {
       onRepoStart: (name, _path, i, total) => {
         wsSpinner.text = `Indexing ${name} (${i + 1}/${total})...`;
       },

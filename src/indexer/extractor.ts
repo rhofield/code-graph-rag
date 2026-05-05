@@ -185,19 +185,28 @@ export function extractGraphEntities(
     }
 
     if (functionTypes.has(node.type)) {
-      const nameNode = node.childForFieldName(mapping.name_field);
+      let nameNode = node.childForFieldName(mapping.name_field);
+
+      if (!nameNode &&
+        (node.type === "arrow_function" || node.type === "function_expression")
+        && node.parent?.type === "variable_declarator"
+      ) {
+        nameNode = node.parent.childForFieldName("name");
+      }
+
       if (nameNode) {
         const funcName = getNodeText(nameNode, source);
-        const snippet = getNodeText(node, source);
-        const signature = extractSignature(node, source);
+        const declNode = node.parent?.type === "variable_declarator" ? (node.parent.parent ?? node) : node;
+        const snippet = getNodeText(declNode, source);
+        const signature = extractSignature(declNode, source);
 
         functions.push({
           name: funcName,
           filePath: absPath,
-          startLine: node.startPosition.row + 1,
+          startLine: declNode.startPosition.row + 1,
           endLine: node.endPosition.row + 1,
           signature,
-          docstring: getDocstring(node, source),
+          docstring: getDocstring(declNode, source),
           snippet,
           className: currentClassName,
         });

@@ -90,9 +90,9 @@ function hasGrpcImportsPython(root: Parser.SyntaxNode, source: string): boolean 
 function hasGrpcImportsTypeScript(root: Parser.SyntaxNode, source: string): boolean {
   for (let i = 0; i < root.childCount; i++) {
     const child = root.child(i)!;
-    if (child.type === "import_statement") {
+    if (child.type === "import_statement" || child.type === "export_statement") {
       const text = getNodeText(child, source);
-      if (/_grpc_pb|ServiceClient|ServiceServer|grpc/.test(text)) return true;
+      if (/_grpc_pb|ServiceClient|ServiceServer|grpc|protobufs|proto/i.test(text)) return true;
     }
   }
   return false;
@@ -558,9 +558,11 @@ function detectPython(tree: Parser.Tree, source: string, filePath: string, regis
 }
 
 function detectTypeScript(tree: Parser.Tree, source: string, filePath: string, registry: ProtoRegistry): RpcAnnotation[] {
-  if (!hasGrpcImportsTypeScript(tree.rootNode, source)) return [];
+  const hasDirectImports = hasGrpcImportsTypeScript(tree.rootNode, source);
   const out: RpcAnnotation[] = [];
-  detectTypeScriptHandlers(tree.rootNode, source, filePath, registry, out);
+  if (hasDirectImports) {
+    detectTypeScriptHandlers(tree.rootNode, source, filePath, registry, out);
+  }
   detectTypeScriptCalls(tree.rootNode, source, filePath, registry, out);
   return out;
 }

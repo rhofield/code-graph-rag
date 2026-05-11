@@ -280,25 +280,82 @@ If you already have a `post-commit` hook, the command appends to it rather than 
 
 ## Development
 
+### Prerequisites
+
+- Node.js >= 18
+- Docker (for the managed Neo4j instance)
+
+### Setup
+
 ```bash
 git clone https://github.com/rhofield/rho-graph
 cd rho-graph
 npm install
-
-# Start Neo4j
-docker compose up -d
-
-# Build
 npm run build
+```
 
-# Watch mode
+### Start Neo4j
+
+```bash
+docker compose up -d
+```
+
+This starts a Neo4j 5.x container with bolt on port 7687 and the browser UI on port 7474 (default credentials: `neo4j` / `rho-graph`).
+
+### Run the CLI locally
+
+After building, use `node bin/rho-graph.js` in place of the global `rho-graph` command:
+
+```bash
+# Index the current repo (or any path)
+node bin/rho-graph.js init
+
+# Check what's in the graph
+node bin/rho-graph.js status
+
+# Query the graph
+node bin/rho-graph.js query --callers myFunction
+node bin/rho-graph.js query --structure
+node bin/rho-graph.js query   # interactive REPL
+
+# Launch the visualization (opens browser on port 3333)
+node bin/rho-graph.js visualize
+```
+
+Or link it globally for convenience:
+
+```bash
+npm link
+rho-graph init
+```
+
+### Dev workflow
+
+```bash
+# Watch mode — recompiles TypeScript on save
 npm run dev
+
+# In another terminal, run commands against the dev build
+node bin/rho-graph.js visualize
 
 # Tests
 npm test
 
-# Type check
+# Type check only (no emit)
 npm run lint
+```
+
+### Project structure
+
+```
+src/
+  cli/           CLI commands (Commander.js)
+  db/            Neo4j connection, queries, schema
+  indexer/       Tree-sitter parsing, entity extraction, graph writing
+  visualize/     Browser-based graph visualization (vis-network)
+    public/      Static HTML + JS served on port 3333
+  mcp/           MCP server and tool handlers
+  config.ts      Config merging (global + repo + env)
 ```
 
 ## License

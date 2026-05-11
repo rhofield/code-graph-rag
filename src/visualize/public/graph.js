@@ -45,6 +45,8 @@ const loadedSet = {
 let network = null;
 let edgeIdCounter = 0;
 const pendingExpands = new Set();
+let clickTimer = null;
+let physicsEnabled = true;
 
 // === API ===
 function parseUrlFilters() {
@@ -141,27 +143,52 @@ function initNetwork() {
       physics: {
         solver: "forceAtlas2Based",
         forceAtlas2Based: {
-          gravitationalConstant: -50,
-          centralGravity: 0.01,
-          springLength: 150,
-          springConstant: 0.08,
-          damping: 0.4,
-          avoidOverlap: 0.5,
+          gravitationalConstant: -300,
+          centralGravity: 0.005,
+          springLength: 250,
+          springConstant: 0.04,
+          damping: 0.6,
+          avoidOverlap: 1.0,
         },
-        stabilization: { iterations: 250, updateInterval: 25 },
-        minVelocity: 0.5,
+        stabilization: { iterations: 400, updateInterval: 25 },
+        minVelocity: 1.5,
+        maxVelocity: 30,
+      },
+      nodes: {
+        shape: "dot",
+        font: {
+          color: "#c9d1d9",
+          size: 12,
+          strokeWidth: 3,
+          strokeColor: "#0d1117",
+        },
       },
       edges: {
-        smooth: { type: "continuous", roundness: 0.2 },
+        smooth: { type: "continuous", roundness: 0.3 },
         font: { size: 0, strokeWidth: 0 },
-        arrows: { to: { scaleFactor: 0.6 } },
+        arrows: { to: { scaleFactor: 0.5 } },
       },
-      interaction: { hover: true, hoverConnectedEdges: true },
+      interaction: {
+        hover: true,
+        hoverConnectedEdges: true,
+        tooltipDelay: 200,
+        multiselect: true,
+      },
     }
   );
 
-  network.on("click", onNodeClick);
-  network.on("doubleClick", onNodeDoubleClick);
+  network.on("stabilizationIterationsDone", () => {
+    freezeGraph();
+  });
+
+  network.on("click", (params) => {
+    clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => onNodeClick(params), 250);
+  });
+  network.on("doubleClick", (params) => {
+    clearTimeout(clickTimer);
+    onNodeDoubleClick(params);
+  });
 }
 
 function applyViewFilters() {
@@ -210,7 +237,7 @@ function updateLoadedCounter() {
 }
 
 function degreeToSize(degree) {
-  return Math.min(35, 12 + Math.sqrt(degree) * 4);
+  return Math.min(45, 16 + Math.sqrt(degree) * 5);
 }
 
 function recomputeNodeSizes() {
@@ -230,6 +257,23 @@ function recomputeNodeSizes() {
   if (updates.length) loadedSet.nodes.update(updates);
 }
 
+function freezeGraph() {
+  network.stopSimulation();
+  network.setOptions({ physics: { enabled: false } });
+  physicsEnabled = false;
+  const btn = document.getElementById("freeze-btn");
+  if (btn) btn.textContent = "Unfreeze layout";
+}
+
+function settleNewNodes() {
+  physicsEnabled = true;
+  network.setOptions({ physics: { enabled: true } });
+  document.getElementById("freeze-btn").textContent = "Freeze layout";
+  setTimeout(() => {
+    if (physicsEnabled) freezeGraph();
+  }, 2000);
+}
+
 // === EVENTS ===
 async function onNodeClick(params) {
   if (params.nodes.length === 0) return;
@@ -242,7 +286,6 @@ async function onNodeClick(params) {
   content.style.display = "block";
   content.textContent = `[${node._group}] ${node.label}\n\n${JSON.stringify(node._properties, null, 2)}`;
 
-  // Expand if not already expanded and not already in flight
   if (node._expanded || pendingExpands.has(nodeId)) return;
 
   if (node._group === "File") {
@@ -251,9 +294,9 @@ async function onNodeClick(params) {
       const data = await fetchExpand("file", { filePath: node._properties.path });
       mergeIntoLoaded(data, nodeId);
       recomputeNodeSizes();
-      // Mark file as expanded
       loadedSet.nodes.update({ id: nodeId, _expanded: true });
       applyViewFilters();
+      settleNewNodes();
     } catch (err) {
       document.getElementById("status").textContent = err.message;
     } finally {
@@ -270,6 +313,7 @@ async function onNodeClick(params) {
       recomputeNodeSizes();
       loadedSet.nodes.update({ id: nodeId, _expanded: true });
       applyViewFilters();
+      settleNewNodes();
     } catch (err) {
       document.getElementById("status").textContent = err.message;
     } finally {
@@ -407,11 +451,14 @@ function bindSidebarEvents() {
     }
   });
 
-  let physicsEnabled = true;
-  document.getElementById("freeze-btn").addEventListener("click", (e) => {
-    physicsEnabled = !physicsEnabled;
-    network.setOptions({ physics: { enabled: physicsEnabled } });
-    e.target.textContent = physicsEnabled ? "Freeze layout" : "Unfreeze layout";
+  document.getElementById("freeze-btn").addEventListener("click", () => {
+    if (physicsEnabled) {
+      freezeGraph();
+    } else {
+      physicsEnabled = true;
+      network.setOptions({ physics: { enabled: true } });
+      document.getElementById("freeze-btn").textContent = "Freeze layout";
+    }
   });
 }
 

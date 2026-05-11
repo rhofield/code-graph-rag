@@ -71,6 +71,63 @@ export function registerQueryCommand(program: Command): void {
     });
 }
 
+function formatValue(v: unknown): string {
+  if (v == null) return "null";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function terminalWidth(): number {
+  return process.stdout.columns ?? 120;
+}
+
+function printTable(keys: string[], rows: string[][]): void {
+  const maxTotal = terminalWidth() - (keys.length - 1) * 3 - 4;
+  const colWidths = keys.map((k, i) => {
+    let max = k.length;
+    for (const row of rows) {
+      max = Math.max(max, row[i].length);
+    }
+    return max;
+  });
+
+  const totalNeeded = colWidths.reduce((a, b) => a + b, 0);
+  if (totalNeeded > maxTotal) {
+    const fair = Math.floor(maxTotal / keys.length);
+    const narrow: number[] = [];
+    let wideTotal = 0;
+    let wideCount = 0;
+    for (let i = 0; i < colWidths.length; i++) {
+      if (colWidths[i] <= fair) {
+        narrow.push(i);
+      } else {
+        wideTotal += colWidths[i];
+        wideCount++;
+      }
+    }
+    const narrowUsed = narrow.reduce((s, i) => s + colWidths[i], 0);
+    const remaining = maxTotal - narrowUsed;
+    const perWide = wideCount > 0 ? Math.floor(remaining / wideCount) : fair;
+    for (let i = 0; i < colWidths.length; i++) {
+      if (colWidths[i] > fair) {
+        colWidths[i] = Math.max(perWide, 8);
+      }
+    }
+  }
+
+  const pad = (s: string, w: number) =>
+    s.length <= w ? s + " ".repeat(w - s.length) : s.slice(0, w - 1) + "…";
+
+  const header = keys.map((k, i) => pad(k, colWidths[i])).join(" │ ");
+  const sep = colWidths.map((w) => "─".repeat(w)).join("─┼─");
+  console.log(header);
+  console.log(sep);
+  for (const row of rows) {
+    console.log(row.map((v, i) => pad(v, colWidths[i])).join(" │ "));
+  }
+  console.log(`\n${rows.length} row(s)`);
+}
+
 async function runQuery(
   db: DbConnection,
   cypher: string,
@@ -84,17 +141,11 @@ async function runQuery(
       return;
     }
 
-    const keys = result.records[0].keys;
-    console.log(keys.join("\t"));
-    console.log(keys.map(() => "---").join("\t"));
-    for (const record of result.records) {
-      const values = keys.map((k) => {
-        const v = record.get(k);
-        return typeof v === "object" ? JSON.stringify(v) : String(v);
-      });
-      console.log(values.join("\t"));
-    }
-    console.log(`\n${result.records.length} row(s)`);
+    const keys = result.records[0].keys as string[];
+    const rows = result.records.map((record) =>
+      keys.map((k) => formatValue(record.get(k)))
+    );
+    printTable(keys, rows);
   } catch (error) {
     console.error(
       `Query error: ${error instanceof Error ? error.message : error}`

@@ -19,8 +19,8 @@ export async function runInstallHook(): Promise<void> {
   const hookDir = join(repoRoot, ".git", "hooks");
 
   if (!existsSync(join(repoRoot, ".git"))) {
-    spinner.fail("Not a git repository");
-    process.exit(1);
+    spinner.warn("Not a git repository — skipping hook install");
+    return;
   }
 
   const hookPath = join(hookDir, "post-commit");

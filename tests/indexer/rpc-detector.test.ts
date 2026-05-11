@@ -185,6 +185,21 @@ describe("RPC Detector — TypeScript", () => {
     expect(callers).toHaveLength(1);
     expect(callers[0].serviceName).toBe("UserServiceHelper");
   });
+
+  it("detects RPC calls inside GraphQL resolver object property arrows using generated node packages", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-resolver.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-resolver.ts", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toContainEqual({
+      functionName: "user",
+      filePath: "ts-graphql-resolver.ts",
+      role: "caller",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
 });
 
 describe("RPC Detector — Java", () => {

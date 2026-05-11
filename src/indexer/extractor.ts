@@ -64,6 +64,10 @@ function getNodeText(node: Parser.SyntaxNode, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
 }
 
+function cleanPropertyName(text: string): string {
+  return text.replace(/^['"`]|['"`]$/g, "");
+}
+
 function getDocstring(
   node: Parser.SyntaxNode,
   source: string
@@ -194,9 +198,21 @@ export function extractGraphEntities(
         nameNode = node.parent.childForFieldName("name");
       }
 
+      if (!nameNode &&
+        (node.type === "arrow_function" || node.type === "function_expression")
+        && node.parent?.type === "pair"
+      ) {
+        nameNode = node.parent.childForFieldName("key");
+      }
+
       if (nameNode) {
-        const funcName = getNodeText(nameNode, source);
-        const declNode = node.parent?.type === "variable_declarator" ? (node.parent.parent ?? node) : node;
+        const funcName = cleanPropertyName(getNodeText(nameNode, source));
+        const declNode =
+          node.parent?.type === "variable_declarator"
+            ? (node.parent.parent ?? node)
+            : node.parent?.type === "pair"
+              ? node.parent
+              : node;
         const snippet = getNodeText(declNode, source);
         const signature = extractSignature(declNode, source);
 

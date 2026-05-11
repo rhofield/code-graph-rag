@@ -13,6 +13,10 @@ function getNodeText(node: Parser.SyntaxNode, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
 }
 
+function cleanPropertyName(text: string): string {
+  return text.replace(/^['"`]|['"`]$/g, "");
+}
+
 function identifierTokens(text: string): string[] {
   return text.split(/[^A-Za-z0-9_]+/).filter(Boolean);
 }
@@ -453,6 +457,29 @@ function detectTypeScriptHandlers(root: Parser.SyntaxNode, source: string, fileP
 
 function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
   function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "pair") {
+      const nameNode = node.childForFieldName("key");
+      const valueNode = node.childForFieldName("value");
+      if (
+        nameNode &&
+        valueNode &&
+        (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
+      ) {
+        const body = valueNode.childForFieldName("body");
+        if (body) {
+          findCallsInBody(
+            body,
+            source,
+            cleanPropertyName(getNodeText(nameNode, source)),
+            filePath,
+            registry,
+            out
+          );
+        }
+        return;
+      }
+    }
+
     // Named arrow / function-expression assigned to a const/let: pull the name
     // from the variable_declarator; the arrow itself has no `name` field.
     if (node.type === "variable_declarator") {

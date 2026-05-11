@@ -62,6 +62,23 @@ describe("extractGraphEntities", () => {
         callee: "validateEmail",
       });
     });
+
+    it("extracts GraphQL resolver functions from object property arrows", async () => {
+      const result = await parseFile("tests/fixtures/grpc/ts-graphql-resolver.ts");
+      const resolverEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/grpc/ts-graphql-resolver.ts"
+      );
+      result!.tree.delete();
+
+      const userResolver = resolverEntities.functions.find((f) => f.name === "user");
+      expect(userResolver).toBeDefined();
+      expect(resolverEntities.calls).toContainEqual(
+        expect.objectContaining({ callerName: "user", calleeName: "getUser" })
+      );
+    });
   });
 
   describe("Python extraction", () => {

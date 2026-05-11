@@ -3,6 +3,7 @@ import type { RpcAnnotation } from "./rpc-detector.js";
 import {
   batchSetRpcHandlerMeta,
   batchSetRpcCallerMeta,
+  batchUpsertProtoUsageRelationships,
   resolveRpcEdges,
   clearRpcMetaForFiles,
 } from "../db/queries.js";
@@ -57,6 +58,16 @@ export async function linkRpcEdges(
       const q = batchSetRpcCallerMeta(callerItems);
       await session.run(q.cypher, q.params);
     }
+
+    const protoUsageItems = annotations.map((a) => ({
+      functionName: a.functionName,
+      filePath: a.filePath,
+      serviceName: a.serviceName,
+      methodName: a.methodName,
+      role: a.role,
+    }));
+    const protoUsageQ = batchUpsertProtoUsageRelationships(protoUsageItems);
+    await session.run(protoUsageQ.cypher, protoUsageQ.params);
 
     const resolveQ = resolveRpcEdges();
     const result = await session.run(resolveQ.cypher, resolveQ.params);

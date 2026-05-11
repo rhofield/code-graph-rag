@@ -14,6 +14,7 @@ const GROUP_COLORS = {
   File: { background: "#1a7f37", border: "#2ea043" },
   Class: { background: "#8957e5", border: "#a371f7" },
   Function: { background: "#da3633", border: "#f85149" },
+  ProtoMethod: { background: "#d29922", border: "#f0b72f" },
 };
 
 const EDGE_STYLES = {
@@ -22,18 +23,20 @@ const EDGE_STYLES = {
   HAS_METHOD:     { color: "#8957e5", width: 1 },
   IMPORTS:        { color: "#d29922", width: 1.5 },
   CALLS:          { color: "#da3633", width: 1 },
+  USES_PROTO:     { color: "#f0b72f", width: 1.5, dashes: true },
   IMPORTS_SYMBOL: { color: "#6e7681", width: 1, dashes: true },
 };
 
 const viewState = {
   search: "",
-  visibleNodeTypes: new Set(["Repository", "File", "Class", "Function"]),
+  visibleNodeTypes: new Set(["Repository", "File", "Class", "Function", "ProtoMethod"]),
   visibleEdgeTypes: new Set([
     "CONTAINS_FILE",
     "CONTAINS",
     "HAS_METHOD",
     "IMPORTS",
     "CALLS",
+    "USES_PROTO",
   ]),
 };
 
@@ -424,9 +427,9 @@ function bindSidebarEvents() {
 
   document.getElementById("reset-view-btn").addEventListener("click", () => {
     viewState.search = "";
-    viewState.visibleNodeTypes = new Set(["Repository", "File", "Class", "Function"]);
+    viewState.visibleNodeTypes = new Set(["Repository", "File", "Class", "Function", "ProtoMethod"]);
     viewState.visibleEdgeTypes = new Set([
-      "CONTAINS_FILE", "CONTAINS", "HAS_METHOD", "IMPORTS", "CALLS",
+      "CONTAINS_FILE", "CONTAINS", "HAS_METHOD", "IMPORTS", "CALLS", "USES_PROTO",
     ]);
     document.getElementById("search-input").value = "";
     document.getElementById("search-result").textContent = "";

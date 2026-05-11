@@ -200,6 +200,20 @@ describe("RPC Detector — TypeScript", () => {
       methodName: "GetUser",
     });
   });
+
+  it("detects GraphQL resolvers consuming generated proto types from bare node packages", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-proto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-proto-consumer.ts", registry);
+    parsed!.tree.delete();
+
+    expect(annotations).toContainEqual({
+      functionName: "user",
+      filePath: "ts-graphql-proto-consumer.ts",
+      role: "consumer",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
 });
 
 describe("RPC Detector — Java", () => {

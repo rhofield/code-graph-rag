@@ -265,6 +265,26 @@ export function batchUpsertCallRelationships(items: Array<{
   };
 }
 
+export function batchUpsertProtoUsageRelationships(items: Array<{
+  functionName: string;
+  filePath: string;
+  serviceName: string;
+  methodName: string;
+  role: "caller" | "handler" | "consumer";
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      MATCH (m:ProtoMethod {serviceName: item.serviceName, methodName: item.methodName})
+      MERGE (fn)-[r:USES_PROTO {role: item.role}]->(m)
+      SET r.serviceName = item.serviceName,
+          r.methodName = item.methodName
+    `,
+    params: { items },
+  };
+}
+
 export function upsertRepositoryWithCommit(data: {
   path: string;
   name: string;
@@ -403,7 +423,8 @@ export function clearRpcMetaForFiles(filePaths: string[]): CypherQuery {
       MATCH (fn:Function {filePath: fp})
       OPTIONAL MATCH (fn)-[out:RPC_CALLS]->()
       OPTIONAL MATCH ()-[inc:RPC_CALLS]->(fn)
-      DELETE out, inc
+      OPTIONAL MATCH (fn)-[protoUse:USES_PROTO]->(:ProtoMethod)
+      DELETE out, inc, protoUse
       REMOVE fn.rpcCallerServices, fn.rpcCallerMethods,
              fn.rpcHandlerService, fn.rpcHandlerMethod
     `,

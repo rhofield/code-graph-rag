@@ -7,6 +7,7 @@ import {
   upsertClass,
   upsertCallRelationship,
   upsertImportRelationship,
+  batchUpsertProtoUsageRelationships,
   deleteFileAndRelationships,
   upsertRepositoryWithCommit,
   getRepositoryCommit,
@@ -87,6 +88,22 @@ describe("query builders", () => {
     });
     expect(cypher).toContain("IMPORTS");
     expect(params.sourceFilePath).toBe("/home/user/project/src/router.ts");
+  });
+
+  it("batchUpsertProtoUsageRelationships links functions to ProtoMethod nodes", () => {
+    const { cypher, params } = batchUpsertProtoUsageRelationships([
+      {
+        functionName: "user",
+        filePath: "/repo/resolvers.ts",
+        serviceName: "UserService",
+        methodName: "GetUser",
+        role: "consumer",
+      },
+    ]);
+
+    expect(cypher).toContain("ProtoMethod");
+    expect(cypher).toContain("USES_PROTO");
+    expect(params.items).toHaveLength(1);
   });
 
   it("deleteFileAndRelationships returns valid cypher", () => {

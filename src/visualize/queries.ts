@@ -73,7 +73,10 @@ export function expandFunction(name: string, filePath: string): CypherQuery {
       MATCH (fn:Function {name: $name, filePath: $filePath})
       OPTIONAL MATCH (fn)-[outCall:CALLS]->(callee:Function)
       OPTIONAL MATCH (caller:Function)-[inCall:CALLS]->(fn)
-      RETURN fn, outCall, callee, inCall, caller
+      OPTIONAL MATCH (fn)-[protoUse:USES_PROTO]->(proto:ProtoMethod)
+      OPTIONAL MATCH (peer:Function)-[peerProtoUse:USES_PROTO]->(proto)
+      WHERE peer IS NULL OR peer <> fn
+      RETURN fn, outCall, callee, inCall, caller, protoUse, proto, peerProtoUse, peer
       LIMIT toInteger($limit)
     `,
     params: { name, filePath, limit: EXPAND_FUNCTION_LIMIT },

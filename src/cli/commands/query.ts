@@ -29,7 +29,7 @@ export function registerQueryCommand(program: Command): void {
 
       if (opts.callers) {
         cypher =
-          "MATCH (caller:Function)-[:CALLS]->(callee:Function {name: $name}) RETURN caller.name AS caller, caller.filePath AS file, caller.startLine AS line";
+          "MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(callee:Function {name: $name}) RETURN caller.name AS caller, caller.filePath AS file, caller.startLine AS line, type(r) as callType, r.serviceName as rpcService, r.methodName as rpcMethod";
       } else if (opts.dependencies) {
         cypher =
           "MATCH (f:File)-[:IMPORTS]->(dep:File) WHERE f.relativePath = $path OR f.path ENDS WITH $path RETURN dep.relativePath AS dependency";

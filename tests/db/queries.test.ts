@@ -10,6 +10,7 @@ import {
   deleteFileAndRelationships,
   upsertRepositoryWithCommit,
   getRepositoryCommit,
+  deleteRepositoryAndFiles,
 } from "../../src/db/queries.js";
 
 describe("query builders", () => {
@@ -110,5 +111,27 @@ describe("query builders", () => {
     const { cypher, params } = getRepositoryCommit({ path: "/project" });
     expect(cypher).toContain("lastIndexedCommit");
     expect(params.path).toBe("/project");
+  });
+});
+
+describe("deleteRepositoryAndFiles", () => {
+  it("scopes to the given repo via CONTAINS_FILE and protoFile prefix", () => {
+    const q = deleteRepositoryAndFiles({ repoPath: "/abs/root/svc-a" });
+    expect(q.cypher).toContain("CONTAINS_FILE");
+    expect(q.cypher).toContain("(pm:ProtoMethod)");
+    expect(q.cypher).toContain("$repoPathWithSep");
+    expect(q.cypher).toContain("DETACH DELETE");
+    expect(q.params).toEqual({
+      repoPath: "/abs/root/svc-a",
+      repoPathWithSep: "/abs/root/svc-a/",
+    });
+  });
+
+  it("does not double-append separator when repoPath already ends in /", () => {
+    const q = deleteRepositoryAndFiles({ repoPath: "/abs/root/svc-a/" });
+    expect(q.params).toEqual({
+      repoPath: "/abs/root/svc-a/",
+      repoPathWithSep: "/abs/root/svc-a/",
+    });
   });
 });

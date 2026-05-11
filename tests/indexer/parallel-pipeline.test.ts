@@ -39,7 +39,7 @@ describe("Semaphore", () => {
 describe("runParallelPipeline", () => {
   it("processes all files and returns correct counts", async () => {
     const parseFn = vi.fn().mockResolvedValue({
-      tree: { rootNode: {} },
+      tree: { rootNode: {}, delete: () => {} },
       language: "typescript",
       source: "const x = 1;",
     });
@@ -87,7 +87,7 @@ describe("runParallelPipeline", () => {
       maxRunning = Math.max(maxRunning, running);
       await new Promise((r) => setTimeout(r, 30));
       running--;
-      return { tree: { rootNode: {} }, language: "typescript", source: "x" };
+      return { tree: { rootNode: {}, delete: () => {} }, language: "typescript", source: "x" };
     });
 
     await runParallelPipeline({
@@ -108,9 +108,9 @@ describe("runParallelPipeline", () => {
 
   it("continues on parse errors and records them", async () => {
     const parseFn = vi.fn()
-      .mockResolvedValueOnce({ tree: { rootNode: {} }, language: "typescript", source: "ok" })
+      .mockResolvedValueOnce({ tree: { rootNode: {}, delete: () => {} }, language: "typescript", source: "ok" })
       .mockRejectedValueOnce(new Error("parse fail"))
-      .mockResolvedValueOnce({ tree: { rootNode: {} }, language: "typescript", source: "ok" });
+      .mockResolvedValueOnce({ tree: { rootNode: {}, delete: () => {} }, language: "typescript", source: "ok" });
 
     const result = await runParallelPipeline({
       files: ["/p/a.ts", "/p/b.ts", "/p/c.ts"],
@@ -147,7 +147,7 @@ describe("runParallelPipeline", () => {
       absRoot: "/p",
       concurrency: 1,
       maxMemoryBytes: 1024 * 1024 * 1024,
-      parseFn: vi.fn().mockResolvedValue({ tree: { rootNode: {} }, language: "typescript", source: "x" }),
+      parseFn: vi.fn().mockResolvedValue({ tree: { rootNode: {}, delete: () => {} }, language: "typescript", source: "x" }),
       extractFn: vi.fn().mockReturnValue({ functions: [], classes: [], imports: [], calls: [] }),
       batchWriter: mockBatchWriter as any,
       computeHashFn: () => "hash",
@@ -166,7 +166,7 @@ describe("runParallelPipeline", () => {
       absRoot: "/p",
       concurrency: 1,
       maxMemoryBytes: 1024 * 1024 * 1024,
-      parseFn: vi.fn().mockResolvedValue({ tree: { rootNode: {} }, language: "typescript", source: "x" }),
+      parseFn: vi.fn().mockResolvedValue({ tree: { rootNode: {}, delete: () => {} }, language: "typescript", source: "x" }),
       extractFn: vi.fn().mockReturnValue({ functions: [], classes: [], imports: [], calls: [] }),
       batchWriter: { add: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), waitForPendingFlush: vi.fn().mockResolvedValue(undefined), get pendingFileCount() { return 0; }, get estimatedMemoryBytes() { return 0; } } as any,
       computeHashFn: () => "hash",

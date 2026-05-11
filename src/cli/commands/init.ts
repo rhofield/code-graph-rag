@@ -11,7 +11,10 @@ import {
   startNeo4j,
   waitForNeo4j,
 } from "../../docker/neo4j.js";
+import { printResolveResult, removeRepoFromGraph } from "../../indexer/graph-cleanup.js";
 import { indexRepository } from "../../indexer/index.js";
+import { resolveRepos } from "../../indexer/resolve-repos.js";
+import { indexWorkspace } from "../../indexer/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,20 +48,45 @@ export async function runInit(): Promise<void> {
   await setupSchema(db);
   schemaSpinner.succeed("Schema ready");
 
-  const indexSpinner = ora("Indexing repository...").start();
-  const result = await indexRepository(db, repoPath, config.index, {
-    onProgress: (current, total) => {
-      indexSpinner.text = `Indexing... ${current}/${total}`;
-    },
+  const resolved = await resolveRepos({
+    workspaceRoot: repoPath,
+    config,
+    removeRepoFromGraph: (p) => removeRepoFromGraph(db, p),
   });
-  indexSpinner.succeed(
-    `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ${result.classesFound} classes`
-  );
+  printResolveResult(resolved);
 
-  if (result.errors.length > 0) {
-    console.log(`\n${result.errors.length} files had errors:`);
-    for (const err of result.errors.slice(0, 5)) {
-      console.log(`  ${err.file}: ${err.error}`);
+  if (resolved.mode === "workspace") {
+    const wsSpinner = ora(`Indexing workspace (${resolved.repos.length} repos)...`).start();
+    const result = await indexWorkspace(db, repoPath, resolved.repos, config.index, {
+      onRepoStart: (name, _path, i, total) => {
+        wsSpinner.text = `Indexing ${name} (${i + 1}/${total})...`;
+      },
+    });
+    wsSpinner.succeed(
+      `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ` +
+        `${result.classesFound} classes, ${result.rpcEdgesCreated} RPC edges across ${result.repos.length} repos`
+    );
+    if (result.errors.length > 0) {
+      console.log(`\n${result.errors.length} files had errors:`);
+      for (const err of result.errors.slice(0, 100)) {
+        console.log(`  ${err.file}: ${err.error}`);
+      }
+    }
+  } else {
+    const indexSpinner = ora("Indexing repository...").start();
+    const result = await indexRepository(db, repoPath, config.index, {
+      onProgress: (current, total) => {
+        indexSpinner.text = `Indexing... ${current}/${total}`;
+      },
+    });
+    indexSpinner.succeed(
+      `Indexed ${result.filesIndexed} files, ${result.functionsFound} functions, ${result.classesFound} classes`
+    );
+    if (result.errors.length > 0) {
+      console.log(`\n${result.errors.length} files had errors:`);
+      for (const err of result.errors.slice(0, 100)) {
+        console.log(`  ${err.file}: ${err.error}`);
+      }
     }
   }
 
@@ -68,6 +96,6 @@ export async function runInit(): Promise<void> {
 export function registerInitCommand(program: Command): void {
   program
     .command("init")
-    .description("Initialize Neo4j and index the current repository")
+    .description("Initialize Neo4j and index the current repository (or workspace if configured)")
     .action(runInit);
 }

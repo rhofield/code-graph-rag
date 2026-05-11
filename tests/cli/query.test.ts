@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatQueryValue } from "../../src/cli/commands/query.js";
+import { formatQueryValue, formatTable } from "../../src/cli/commands/query.js";
 
 describe("query output formatting", () => {
   it("keeps scalar values unchanged in non-verbose output", () => {
@@ -37,5 +37,17 @@ describe("query output formatting", () => {
     };
 
     expect(formatQueryValue(node, true)).toBe(JSON.stringify(node));
+  });
+
+  it("does not truncate file column values", () => {
+    const file = "/repo/services/payments/src/domain/process-payment.ts";
+    const output = formatTable(
+      ["caller", "file"],
+      [["processPayment", file]],
+      24
+    );
+
+    expect(output).toContain(file);
+    expect(output).not.toContain("/repo/services…");
   });
 });

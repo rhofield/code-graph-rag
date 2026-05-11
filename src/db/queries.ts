@@ -152,11 +152,9 @@ export function functionCallersQuery(data: {
   const returnClause =
     data.verbose === false
       ? `
-      RETURN DISTINCT caller.name AS callerName,
-             caller.name AS caller,
-             caller.name AS callerFunction,
+      RETURN DISTINCT caller.name AS caller,
              caller.filePath AS file
-      ORDER BY file, callerName
+      ORDER BY file, caller
     `
       : `
       RETURN DISTINCT caller.name AS callerName,

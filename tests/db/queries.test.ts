@@ -161,11 +161,11 @@ describe("query builders", () => {
       verbose: false,
     });
 
-    expect(cypher).toContain("caller.name AS callerName");
     expect(cypher).toContain("caller.name AS caller");
-    expect(cypher).toContain("caller.name AS callerFunction");
     expect(cypher).toContain("caller.filePath AS file");
     const outputClause = cypher.slice(cypher.lastIndexOf("RETURN DISTINCT"));
+    expect(outputClause).not.toContain("callerName");
+    expect(outputClause).not.toContain("callerFunction");
     expect(outputClause).not.toContain("caller.signature AS signature");
     expect(outputClause).not.toContain("callType");
     expect(outputClause).not.toContain("graphqlResolver");

@@ -182,8 +182,13 @@ function terminalWidth(): number {
   return process.stdout.columns ?? 120;
 }
 
-function printTable(keys: string[], rows: string[][]): void {
-  const maxTotal = terminalWidth() - (keys.length - 1) * 3 - 4;
+export function formatTable(
+  keys: string[],
+  rows: string[][],
+  width = terminalWidth()
+): string {
+  const maxTotal = width - (keys.length - 1) * 3 - 4;
+  const protectedColumns = new Set(["file"]);
   const colWidths = keys.map((k, i) => {
     let max = k.length;
     for (const row of rows) {
@@ -196,21 +201,26 @@ function printTable(keys: string[], rows: string[][]): void {
   if (totalNeeded > maxTotal) {
     const fair = Math.floor(maxTotal / keys.length);
     const narrow: number[] = [];
-    let wideTotal = 0;
     let wideCount = 0;
     for (let i = 0; i < colWidths.length; i++) {
+      if (protectedColumns.has(keys[i])) {
+        continue;
+      }
       if (colWidths[i] <= fair) {
         narrow.push(i);
       } else {
-        wideTotal += colWidths[i];
         wideCount++;
       }
     }
-    const narrowUsed = narrow.reduce((s, i) => s + colWidths[i], 0);
-    const remaining = maxTotal - narrowUsed;
+    const fixedUsed = keys.reduce(
+      (sum, key, i) =>
+        protectedColumns.has(key) || narrow.includes(i) ? sum + colWidths[i] : sum,
+      0
+    );
+    const remaining = maxTotal - fixedUsed;
     const perWide = wideCount > 0 ? Math.floor(remaining / wideCount) : fair;
     for (let i = 0; i < colWidths.length; i++) {
-      if (colWidths[i] > fair) {
+      if (!protectedColumns.has(keys[i]) && colWidths[i] > fair) {
         colWidths[i] = Math.max(perWide, 8);
       }
     }
@@ -219,14 +229,19 @@ function printTable(keys: string[], rows: string[][]): void {
   const pad = (s: string, w: number) =>
     s.length <= w ? s + " ".repeat(w - s.length) : s.slice(0, w - 1) + "…";
 
-  const header = keys.map((k, i) => pad(k, colWidths[i])).join(" │ ");
-  const sep = colWidths.map((w) => "─".repeat(w)).join("─┼─");
-  console.log(header);
-  console.log(sep);
+  const lines: string[] = [];
+  lines.push(keys.map((k, i) => pad(k, colWidths[i])).join(" │ "));
+  lines.push(colWidths.map((w) => "─".repeat(w)).join("─┼─"));
   for (const row of rows) {
-    console.log(row.map((v, i) => pad(v, colWidths[i])).join(" │ "));
+    lines.push(row.map((v, i) => pad(v, colWidths[i])).join(" │ "));
   }
-  console.log(`\n${rows.length} row(s)`);
+  lines.push("");
+  lines.push(`${rows.length} row(s)`);
+  return lines.join("\n");
+}
+
+function printTable(keys: string[], rows: string[][]): void {
+  console.log(formatTable(keys, rows));
 }
 
 async function runQuery(

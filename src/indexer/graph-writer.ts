@@ -8,6 +8,7 @@ import {
   upsertCallRelationship,
   upsertImportRelationship,
   batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLResolverLinks,
   batchUpsertGraphQLUsages,
   batchUpsertGraphQLFragmentSpreads,
 } from "../db/queries.js";
@@ -91,6 +92,8 @@ export async function writeGraphEntities(
     if ((entities.graphqlDocuments ?? []).length > 0) {
       const q = batchUpsertGraphQLDocuments(entities.graphqlDocuments);
       await session.run(q.cypher, q.params);
+      const resolverQ = batchUpsertGraphQLResolverLinks(entities.graphqlDocuments);
+      await session.run(resolverQ.cypher, resolverQ.params);
     }
 
     // Upsert call relationships

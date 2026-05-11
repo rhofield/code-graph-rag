@@ -141,6 +141,7 @@ describe("BatchGraphWriter", () => {
             signature: "query GetUser",
             snippet: "query GetUser { user { ...UserFields } }",
             variableName: "GET_USER",
+            resolverFieldNames: ["user"],
           },
           {
             name: "UserFields",
@@ -151,6 +152,7 @@ describe("BatchGraphWriter", () => {
             signature: "fragment UserFields",
             snippet: "fragment UserFields on User { id }",
             variableName: "USER_FIELDS",
+            resolverFieldNames: [],
           },
         ],
         graphqlUsages: [
@@ -179,6 +181,7 @@ describe("BatchGraphWriter", () => {
     expect(cyphers).toContain("GraphQLDocument");
     expect(cyphers).toContain("USES_GRAPHQL");
     expect(cyphers).toContain("USES_FRAGMENT");
+    expect(cyphers).toContain("USES_GRAPHQL_RESOLVER");
   });
 
   it("flush resets counters", async () => {

@@ -15,6 +15,7 @@ export function registerQueryCommand(program: Command): void {
     .option("--callers <functionName>", "Find all callers of a function")
     .option("--dependencies <filePath>", "Find dependencies of a file")
     .option("--structure", "Show high-level repo structure")
+    .option("-v, --verbose", "Show full query result values for agents")
     .action(async (cypher, opts) => {
       const repoPath = resolve(".");
       const config = loadConfig(repoPath);
@@ -45,7 +46,7 @@ export function registerQueryCommand(program: Command): void {
           Object.assign(params, functionCallersQuery({ functionName: opts.callers }).params);
         }
         if (opts.dependencies) params.path = opts.dependencies;
-        await runQuery(db, cypher, params);
+        await runQuery(db, cypher, params, Boolean(opts.verbose));
         await db.close();
         return;
       }
@@ -67,17 +68,105 @@ export function registerQueryCommand(program: Command): void {
           return;
         }
         if (trimmed) {
-          await runQuery(db, trimmed, {});
+          await runQuery(db, trimmed, {}, Boolean(opts.verbose));
         }
         rl.prompt();
       });
     });
 }
 
-function formatValue(v: unknown): string {
+type Neo4jNodeLike = {
+  labels: string[];
+  properties: Record<string, unknown>;
+};
+
+type Neo4jRelationshipLike = {
+  type: string;
+  properties: Record<string, unknown>;
+};
+
+function formatVerboseValue(v: unknown): string {
   if (v == null) return "null";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function isNeo4jNodeLike(v: unknown): v is Neo4jNodeLike {
+  return (
+    isRecord(v) &&
+    Array.isArray(v.labels) &&
+    isRecord(v.properties)
+  );
+}
+
+function isNeo4jRelationshipLike(v: unknown): v is Neo4jRelationshipLike {
+  return (
+    isRecord(v) &&
+    typeof v.type === "string" &&
+    isRecord(v.properties)
+  );
+}
+
+function firstString(
+  properties: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = properties[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
+}
+
+function formatLine(properties: Record<string, unknown>): string {
+  const line = properties.startLine;
+  return typeof line === "number" ? `:${line}` : "";
+}
+
+function summarizeNode(node: Neo4jNodeLike): string {
+  const label = node.labels.join(":") || "Node";
+  const properties = node.properties;
+  const identifier =
+    typeof properties.serviceName === "string" &&
+    typeof properties.methodName === "string"
+      ? `${properties.serviceName}.${properties.methodName}`
+      : firstString(properties, [
+          "name",
+          "relativePath",
+          "path",
+          "filePath",
+          "protoFile",
+          "methodName",
+          "serviceName",
+        ]);
+  const location = firstString(properties, ["relativePath", "filePath", "path"]);
+
+  if (identifier && location && identifier !== location) {
+    return `${label} ${identifier} (${location}${formatLine(properties)})`;
+  }
+  if (identifier) return `${label} ${identifier}`;
+  if (location) return `${label} ${location}${formatLine(properties)}`;
+  return label;
+}
+
+function summarizeRelationship(relationship: Neo4jRelationshipLike): string {
+  const role = firstString(relationship.properties, ["role"]);
+  return role ? `${relationship.type} (${role})` : relationship.type;
+}
+
+export function formatQueryValue(v: unknown, verbose: boolean): string {
+  if (verbose) return formatVerboseValue(v);
+  if (v == null || typeof v !== "object") return formatVerboseValue(v);
+  if (Array.isArray(v)) {
+    return `[${v.map((item) => formatQueryValue(item, false)).join(", ")}]`;
+  }
+  if (isNeo4jNodeLike(v)) return summarizeNode(v);
+  if (isNeo4jRelationshipLike(v)) return summarizeRelationship(v);
+  return formatVerboseValue(v);
 }
 
 function terminalWidth(): number {
@@ -134,7 +223,8 @@ function printTable(keys: string[], rows: string[][]): void {
 async function runQuery(
   db: DbConnection,
   cypher: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  verbose: boolean
 ): Promise<void> {
   const session = db.session();
   try {
@@ -146,7 +236,7 @@ async function runQuery(
 
     const keys = result.records[0].keys as string[];
     const rows = result.records.map((record) =>
-      keys.map((k) => formatValue(record.get(k)))
+      keys.map((k) => formatQueryValue(record.get(k), verbose))
     );
     printTable(keys, rows);
   } catch (error) {

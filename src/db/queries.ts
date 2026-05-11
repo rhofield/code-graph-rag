@@ -161,7 +161,10 @@ export function functionCallersQuery(data: {
                r.methodName AS rpcMethod,
                null AS protoService,
                null AS protoMethod,
-               null AS protoRole
+               null AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
         UNION
         WITH target
         MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
@@ -172,7 +175,55 @@ export function functionCallersQuery(data: {
                null AS rpcMethod,
                proto.serviceName AS protoService,
                proto.methodName AS protoMethod,
-               peerUse.role AS protoRole
+               peerUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(target)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               target.name AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (resolver:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_RESOLVER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
       }
       RETURN DISTINCT caller.name AS callerName,
              caller.name AS caller,
@@ -186,7 +237,10 @@ export function functionCallersQuery(data: {
              rpcMethod,
              protoService,
              protoMethod,
-             protoRole
+             protoRole,
+             graphqlDocument,
+             graphqlField,
+             graphqlResolver
       ORDER BY callerFilePath, callerName, callType
     `,
     params: {
@@ -346,6 +400,7 @@ export function batchUpsertGraphQLDocuments(items: Array<{
   signature: string;
   snippet: string;
   variableName: string | null;
+  resolverFieldNames?: string[];
 }>): CypherQuery {
   return {
     cypher: `
@@ -355,12 +410,33 @@ export function batchUpsertGraphQLDocuments(items: Array<{
           doc.endLine = item.endLine,
           doc.signature = item.signature,
           doc.snippet = item.snippet,
-          doc.variableName = item.variableName
+          doc.variableName = item.variableName,
+          doc.resolverFieldNames = coalesce(item.resolverFieldNames, [])
       WITH item, doc
       OPTIONAL MATCH (f:File {path: item.filePath})
       FOREACH (_ IN CASE WHEN f IS NULL THEN [] ELSE [1] END |
         MERGE (f)-[:CONTAINS]->(doc)
       )
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLResolverLinks(items: Array<{
+  name: string;
+  kind: string;
+  filePath: string;
+  resolverFieldNames?: string[];
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (doc:GraphQLDocument {name: item.name, kind: item.kind, filePath: item.filePath})
+      WITH item, doc, coalesce(item.resolverFieldNames, []) AS resolverFieldNames
+      UNWIND resolverFieldNames AS fieldName
+      MATCH (resolver:Function {name: fieldName})
+      MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+      SET r.fieldName = fieldName
     `,
     params: { items },
   };

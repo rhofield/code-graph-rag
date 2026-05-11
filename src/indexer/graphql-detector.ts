@@ -12,6 +12,7 @@ export interface ExtractedGraphQLDocument {
   signature: string;
   snippet: string;
   variableName: string | null;
+  resolverFieldNames: string[];
 }
 
 export interface ExtractedGraphQLUsage {
@@ -85,6 +86,138 @@ function findDocumentDefinitions(source: string): DocumentMatch[] {
   return matches;
 }
 
+function findMatchingBrace(source: string, openIndex: number): number {
+  let depth = 0;
+  for (let i = openIndex; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function skipWhitespaceAndComments(source: string, index: number): number {
+  let i = index;
+  while (i < source.length) {
+    if (/\s/.test(source[i])) {
+      i++;
+      continue;
+    }
+    if (source[i] === "#") {
+      while (i < source.length && source[i] !== "\n") i++;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+function readName(source: string, index: number): { name: string; end: number } | null {
+  const match = source.slice(index).match(/^[_A-Za-z][_0-9A-Za-z]*/);
+  if (!match) return null;
+  return { name: match[0], end: index + match[0].length };
+}
+
+function skipBalanced(source: string, index: number, open: string, close: string): number {
+  if (source[index] !== open) return index;
+  let depth = 0;
+  for (let i = index; i < source.length; i++) {
+    if (source[i] === open) depth++;
+    if (source[i] === close) {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return source.length;
+}
+
+function extractTopLevelOperationFields(snippet: string, kind: GraphQLDocumentKind): string[] {
+  if (kind === "fragment") return [];
+  const selectionStart = snippet.indexOf("{");
+  if (selectionStart === -1) return [];
+  const selectionEnd = findMatchingBrace(snippet, selectionStart);
+  if (selectionEnd === -1) return [];
+
+  const fields: string[] = [];
+  const seen = new Set<string>();
+  let i = selectionStart + 1;
+  let depth = 1;
+
+  while (i < selectionEnd) {
+    const ch = snippet[i];
+    if (ch === "{") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === "}") {
+      depth--;
+      i++;
+      continue;
+    }
+    if (depth !== 1) {
+      i++;
+      continue;
+    }
+
+    i = skipWhitespaceAndComments(snippet, i);
+    if (i >= selectionEnd) break;
+    if (snippet[i] === "{") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (snippet[i] === "}") {
+      depth--;
+      i++;
+      continue;
+    }
+    if (snippet.startsWith("...", i)) {
+      i += 3;
+      continue;
+    }
+    if (snippet[i] === "@") {
+      const directive = readName(snippet, i + 1);
+      i = directive ? directive.end : i + 1;
+      i = skipWhitespaceAndComments(snippet, i);
+      if (snippet[i] === "(") i = skipBalanced(snippet, i, "(", ")");
+      continue;
+    }
+    if (snippet[i] === "(") {
+      i = skipBalanced(snippet, i, "(", ")");
+      continue;
+    }
+
+    const first = readName(snippet, i);
+    if (!first) {
+      i++;
+      continue;
+    }
+
+    let fieldName = first.name;
+    let cursor = skipWhitespaceAndComments(snippet, first.end);
+    if (snippet[cursor] === ":") {
+      cursor = skipWhitespaceAndComments(snippet, cursor + 1);
+      const aliased = readName(snippet, cursor);
+      if (aliased) {
+        fieldName = aliased.name;
+        cursor = aliased.end;
+      }
+    }
+
+    if (!seen.has(fieldName)) {
+      seen.add(fieldName);
+      fields.push(fieldName);
+    }
+    i = cursor;
+  }
+
+  return fields;
+}
+
 export function parseGraphQLDocuments(
   source: string,
   filePath: string,
@@ -117,6 +250,7 @@ export function parseGraphQLDocuments(
       signature,
       snippet,
       variableName,
+      resolverFieldNames: extractTopLevelOperationFields(snippet, def.kind),
     });
 
     for (const spread of snippet.matchAll(FRAGMENT_SPREAD_RE)) {

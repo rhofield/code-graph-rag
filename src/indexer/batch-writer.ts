@@ -16,6 +16,7 @@ import {
   batchUpsertCallRelationships,
   batchUpsertImportRelationships,
   batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLResolverLinks,
   batchUpsertGraphQLUsages,
   batchUpsertGraphQLFragmentSpreads,
 } from "../db/queries.js";
@@ -227,6 +228,8 @@ export class BatchGraphWriter {
       if (allGraphQLDocuments.length > 0) {
         const docsQ = batchUpsertGraphQLDocuments(allGraphQLDocuments);
         await tx.run(docsQ.cypher, docsQ.params);
+        const resolverLinksQ = batchUpsertGraphQLResolverLinks(allGraphQLDocuments);
+        await tx.run(resolverLinksQ.cypher, resolverLinksQ.params);
       }
 
       if (allGraphQLUsages.length > 0) {

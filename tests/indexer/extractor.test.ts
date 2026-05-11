@@ -96,11 +96,13 @@ describe("extractGraphEntities", () => {
             name: "GetUser",
             kind: "query",
             variableName: "GET_USER",
+            resolverFieldNames: ["user"],
           }),
           expect.objectContaining({
             name: "UpdateUser",
             kind: "mutation",
             variableName: "UPDATE_USER",
+            resolverFieldNames: ["updateUser"],
           }),
           expect.objectContaining({
             name: "UserFields",
@@ -115,6 +117,7 @@ describe("extractGraphEntities", () => {
           expect.objectContaining({
             name: "GetImportedUser",
             kind: "query",
+            resolverFieldNames: ["user"],
             filePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
           }),
         ])

@@ -15,6 +15,7 @@ import {
   batchUpsertGraphQLDocuments,
   batchUpsertGraphQLUsages,
   batchUpsertGraphQLFragmentSpreads,
+  batchUpsertGraphQLResolverLinks,
   functionCallersQuery,
 } from "../../src/db/queries.js";
 
@@ -143,6 +144,10 @@ describe("query builders", () => {
     expect(cypher).toContain("CALLS|RPC_CALLS");
     expect(cypher).toContain("USES_PROTO");
     expect(cypher).toContain("ProtoMethod");
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("USES_GRAPHQL");
+    expect(cypher).toContain("graphqlDocument");
+    expect(cypher).toContain("graphqlResolver");
     expect(cypher).toContain("peerUse.role");
     expect(params).toEqual({
       functionName: "GetUser",
@@ -161,12 +166,34 @@ describe("query builders", () => {
         signature: "query GetUser",
         snippet: "query GetUser { user { id } }",
         variableName: "GET_USER",
+        resolverFieldNames: ["user"],
       },
     ]);
 
     expect(cypher).toContain("GraphQLDocument");
     expect(cypher).toContain("CONTAINS");
     expect(cypher).toContain("variableName");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLResolverLinks links operation documents to resolver functions by field name", () => {
+    const { cypher, params } = batchUpsertGraphQLResolverLinks([
+      {
+        name: "GetUser",
+        kind: "query",
+        filePath: "/project/src/User.tsx",
+        startLine: 3,
+        endLine: 9,
+        signature: "query GetUser",
+        snippet: "query GetUser { user { id } }",
+        variableName: "GET_USER",
+        resolverFieldNames: ["user"],
+      },
+    ]);
+
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("resolverFieldNames");
+    expect(cypher).toContain(":Function");
     expect(params.items).toHaveLength(1);
   });
 

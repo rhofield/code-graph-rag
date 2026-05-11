@@ -30,7 +30,10 @@ export function registerQueryCommand(program: Command): void {
       }
 
       if (opts.callers) {
-        const q = functionCallersQuery({ functionName: opts.callers });
+        const q = functionCallersQuery({
+          functionName: opts.callers,
+          verbose: Boolean(opts.verbose),
+        });
         cypher = q.cypher;
       } else if (opts.dependencies) {
         cypher =
@@ -43,7 +46,13 @@ export function registerQueryCommand(program: Command): void {
       if (cypher) {
         const params: Record<string, unknown> = {};
         if (opts.callers) {
-          Object.assign(params, functionCallersQuery({ functionName: opts.callers }).params);
+          Object.assign(
+            params,
+            functionCallersQuery({
+              functionName: opts.callers,
+              verbose: Boolean(opts.verbose),
+            }).params
+          );
         }
         if (opts.dependencies) params.path = opts.dependencies;
         await runQuery(db, cypher, params, Boolean(opts.verbose));

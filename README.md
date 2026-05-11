@@ -107,6 +107,10 @@ rho-graph query
 cypher> MATCH (c:Class)-[:CONTAINS]->(f:Function) RETURN c.name, count(f) ORDER BY count(f) DESC
 ```
 
+`rho-graph query --callers` defaults to a lean human-readable table with only
+`callerName`, `caller`, `callerFunction`, and `file`. Use `-v` / `--verbose`
+to include call type, RPC, GraphQL, signature, and line metadata for agents.
+
 ### `visualize` options
 
 ```bash

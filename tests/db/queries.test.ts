@@ -155,6 +155,26 @@ describe("query builders", () => {
     });
   });
 
+  it("functionCallersQuery can return only lean human-facing caller columns", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "GetUser",
+      verbose: false,
+    });
+
+    expect(cypher).toContain("caller.name AS callerName");
+    expect(cypher).toContain("caller.name AS caller");
+    expect(cypher).toContain("caller.name AS callerFunction");
+    expect(cypher).toContain("caller.filePath AS file");
+    const outputClause = cypher.slice(cypher.lastIndexOf("RETURN DISTINCT"));
+    expect(outputClause).not.toContain("caller.signature AS signature");
+    expect(outputClause).not.toContain("callType");
+    expect(outputClause).not.toContain("graphqlResolver");
+    expect(params).toEqual({
+      functionName: "GetUser",
+      filePath: null,
+    });
+  });
+
   it("batchUpsertGraphQLDocuments merges GraphQLDocument nodes and links files when present", () => {
     const { cypher, params } = batchUpsertGraphQLDocuments([
       {

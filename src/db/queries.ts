@@ -147,7 +147,37 @@ export function upsertImportSymbol(data: {
 export function functionCallersQuery(data: {
   functionName: string;
   filePath?: string | null;
+  verbose?: boolean;
 }): CypherQuery {
+  const returnClause =
+    data.verbose === false
+      ? `
+      RETURN DISTINCT caller.name AS callerName,
+             caller.name AS caller,
+             caller.name AS callerFunction,
+             caller.filePath AS file
+      ORDER BY file, callerName
+    `
+      : `
+      RETURN DISTINCT caller.name AS callerName,
+             caller.name AS caller,
+             caller.filePath AS callerFilePath,
+             caller.filePath AS file,
+             caller.signature AS signature,
+             caller.startLine AS startLine,
+             caller.startLine AS line,
+             callType,
+             rpcService,
+             rpcMethod,
+             protoService,
+             protoMethod,
+             protoRole,
+             graphqlDocument,
+             graphqlField,
+             graphqlResolver
+      ORDER BY callerFilePath, callerName, callType
+    `;
+
   return {
     cypher: `
       MATCH (target:Function {name: $functionName})
@@ -225,23 +255,7 @@ export function functionCallersQuery(data: {
                gqlRel.fieldName AS graphqlField,
                resolver.name AS graphqlResolver
       }
-      RETURN DISTINCT caller.name AS callerName,
-             caller.name AS caller,
-             caller.filePath AS callerFilePath,
-             caller.filePath AS file,
-             caller.signature AS signature,
-             caller.startLine AS startLine,
-             caller.startLine AS line,
-             callType,
-             rpcService,
-             rpcMethod,
-             protoService,
-             protoMethod,
-             protoRole,
-             graphqlDocument,
-             graphqlField,
-             graphqlResolver
-      ORDER BY callerFilePath, callerName, callType
+      ${returnClause}
     `,
     params: {
       functionName: data.functionName,

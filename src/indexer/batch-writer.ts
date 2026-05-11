@@ -1,5 +1,10 @@
 import type { DbConnection } from "../db/connection.js";
 import type { GraphEntities, ExtractedFunction, ExtractedClass, ExtractedCall } from "./extractor.js";
+import type {
+  ExtractedGraphQLDocument,
+  ExtractedGraphQLFragmentSpread,
+  ExtractedGraphQLUsage,
+} from "./graphql-detector.js";
 import type { FileMetadata } from "./graph-writer.js";
 import { Semaphore } from "./parallel-pipeline.js";
 import {
@@ -10,6 +15,9 @@ import {
   batchUpsertMethods,
   batchUpsertCallRelationships,
   batchUpsertImportRelationships,
+  batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLUsages,
+  batchUpsertGraphQLFragmentSpreads,
 } from "../db/queries.js";
 import { resolveImport } from "./import-resolver.js";
 
@@ -19,6 +27,9 @@ interface FlushSnapshot {
   classes: ExtractedClass[];
   calls: ExtractedCall[];
   imports: Array<{ sourceFilePath: string; targetFilePath: string }>;
+  graphqlDocuments: ExtractedGraphQLDocument[];
+  graphqlUsages: ExtractedGraphQLUsage[];
+  graphqlFragmentSpreads: ExtractedGraphQLFragmentSpread[];
 }
 
 export class BatchGraphWriter {
@@ -27,6 +38,9 @@ export class BatchGraphWriter {
   private allClasses: ExtractedClass[] = [];
   private allCalls: ExtractedCall[] = [];
   private allImports: Array<{ sourceFilePath: string; targetFilePath: string }> = [];
+  private allGraphQLDocuments: ExtractedGraphQLDocument[] = [];
+  private allGraphQLUsages: ExtractedGraphQLUsage[] = [];
+  private allGraphQLFragmentSpreads: ExtractedGraphQLFragmentSpread[] = [];
   private _estimatedMemoryBytes = 0;
   private _flushSem = new Semaphore(1);
   private _inFlight = new Set<Promise<void>>();
@@ -61,6 +75,9 @@ export class BatchGraphWriter {
     this.allFunctions.push(...validFunctions);
     this.allClasses.push(...validClasses);
     this.allCalls.push(...entities.calls);
+    this.allGraphQLDocuments.push(...(entities.graphqlDocuments ?? []));
+    this.allGraphQLUsages.push(...(entities.graphqlUsages ?? []));
+    this.allGraphQLFragmentSpreads.push(...(entities.graphqlFragmentSpreads ?? []));
 
     for (const imp of entities.imports) {
       const target = resolveImport(imp.source, meta.filePath, meta.language, this.filePathSet);
@@ -83,12 +100,18 @@ export class BatchGraphWriter {
       classes: this.allClasses,
       calls: this.allCalls,
       imports: this.allImports,
+      graphqlDocuments: this.allGraphQLDocuments,
+      graphqlUsages: this.allGraphQLUsages,
+      graphqlFragmentSpreads: this.allGraphQLFragmentSpreads,
     };
     this.fileMetas = [];
     this.allFunctions = [];
     this.allClasses = [];
     this.allCalls = [];
     this.allImports = [];
+    this.allGraphQLDocuments = [];
+    this.allGraphQLUsages = [];
+    this.allGraphQLFragmentSpreads = [];
     this._estimatedMemoryBytes = 0;
     return snapshot;
   }
@@ -123,7 +146,16 @@ export class BatchGraphWriter {
   }
 
   private async _doFlush(snapshot: FlushSnapshot): Promise<void> {
-    const { fileMetas, functions: allFunctions, classes: allClasses, calls: allCalls, imports: allImports } = snapshot;
+    const {
+      fileMetas,
+      functions: allFunctions,
+      classes: allClasses,
+      calls: allCalls,
+      imports: allImports,
+      graphqlDocuments: allGraphQLDocuments,
+      graphqlUsages: allGraphQLUsages,
+      graphqlFragmentSpreads: allGraphQLFragmentSpreads,
+    } = snapshot;
 
     const session = this.db.session();
     const tx = session.beginTransaction();
@@ -190,6 +222,21 @@ export class BatchGraphWriter {
       if (allCalls.length > 0) {
         const callsQ = batchUpsertCallRelationships(allCalls);
         await tx.run(callsQ.cypher, callsQ.params);
+      }
+
+      if (allGraphQLDocuments.length > 0) {
+        const docsQ = batchUpsertGraphQLDocuments(allGraphQLDocuments);
+        await tx.run(docsQ.cypher, docsQ.params);
+      }
+
+      if (allGraphQLUsages.length > 0) {
+        const usagesQ = batchUpsertGraphQLUsages(allGraphQLUsages);
+        await tx.run(usagesQ.cypher, usagesQ.params);
+      }
+
+      if (allGraphQLFragmentSpreads.length > 0) {
+        const spreadsQ = batchUpsertGraphQLFragmentSpreads(allGraphQLFragmentSpreads);
+        await tx.run(spreadsQ.cypher, spreadsQ.params);
       }
 
       if (allImports.length > 0) {

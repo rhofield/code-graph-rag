@@ -48,6 +48,9 @@ describe("writeGraphEntities", () => {
           calleeName: "validate",
         },
       ],
+      graphqlDocuments: [],
+      graphqlUsages: [],
+      graphqlFragmentSpreads: [],
     };
 
     await writeGraphEntities(mockDb as any, entities, {
@@ -69,6 +72,9 @@ describe("writeGraphEntities", () => {
       classes: [],
       imports: [],
       calls: [],
+      graphqlDocuments: [],
+      graphqlUsages: [],
+      graphqlFragmentSpreads: [],
     };
 
     await writeGraphEntities(mockDb as any, entities, {
@@ -82,6 +88,78 @@ describe("writeGraphEntities", () => {
 
     // Should still write file node and delete old children
     expect(mockRun.mock.calls.length).toBe(2);
+  });
+
+  it("writes GraphQL documents, frontend usages, and fragment spreads", async () => {
+    const entities: GraphEntities = {
+      functions: [
+        {
+          name: "UserCard",
+          filePath: "/project/src/UserCard.tsx",
+          startLine: 30,
+          endLine: 35,
+          signature: "export function UserCard()",
+          docstring: null,
+          snippet: "export function UserCard() { return useQuery(GET_USER); }",
+          className: null,
+        },
+      ],
+      classes: [],
+      imports: [],
+      calls: [],
+      graphqlDocuments: [
+        {
+          name: "GetUser",
+          kind: "query",
+          filePath: "/project/src/UserCard.tsx",
+          startLine: 3,
+          endLine: 12,
+          signature: "query GetUser",
+          snippet: "query GetUser { user { ...UserFields } }",
+          variableName: "GET_USER",
+        },
+        {
+          name: "UserFields",
+          kind: "fragment",
+          filePath: "/project/src/UserCard.tsx",
+          startLine: 14,
+          endLine: 18,
+          signature: "fragment UserFields",
+          snippet: "fragment UserFields on User { id }",
+          variableName: "USER_FIELDS",
+        },
+      ],
+      graphqlUsages: [
+        {
+          sourceName: "UserCard",
+          sourceFilePath: "/project/src/UserCard.tsx",
+          documentName: "GetUser",
+          documentFilePath: "/project/src/UserCard.tsx",
+        },
+      ],
+      graphqlFragmentSpreads: [
+        {
+          sourceDocumentName: "GetUser",
+          sourceDocumentFilePath: "/project/src/UserCard.tsx",
+          targetFragmentName: "UserFields",
+          targetFragmentFilePath: "/project/src/UserCard.tsx",
+        },
+      ],
+    };
+
+    await writeGraphEntities(mockDb as any, entities, {
+      filePath: "/project/src/UserCard.tsx",
+      relativePath: "src/UserCard.tsx",
+      repoPath: "/project",
+      language: "tsx",
+      hash: "abc123",
+      lastModified: 1700000000,
+    });
+
+    const cyphers = mockRun.mock.calls.map((call) => call[0]).join("\n");
+    expect(cyphers).toContain("GraphQLDocument");
+    expect(cyphers).toContain("USES_GRAPHQL");
+    expect(cyphers).toContain("USES_FRAGMENT");
   });
 });
 

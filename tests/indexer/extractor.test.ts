@@ -79,6 +79,84 @@ describe("extractGraphEntities", () => {
         expect.objectContaining({ callerName: "user", calleeName: "getUser" })
       );
     });
+
+    it("extracts frontend GraphQL documents, usages, and fragment spreads from TSX", async () => {
+      const result = await parseFile("tests/fixtures/graphql/frontend-graphql.tsx");
+      const frontendEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/graphql/frontend-graphql.tsx"
+      );
+      result!.tree.delete();
+
+      expect(frontendEntities.graphqlDocuments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "GetUser",
+            kind: "query",
+            variableName: "GET_USER",
+          }),
+          expect.objectContaining({
+            name: "UpdateUser",
+            kind: "mutation",
+            variableName: "UPDATE_USER",
+          }),
+          expect.objectContaining({
+            name: "UserFields",
+            kind: "fragment",
+            variableName: "USER_FIELDS",
+          }),
+          expect.objectContaining({
+            name: "AvatarFields",
+            kind: "fragment",
+            variableName: "AVATAR_FIELDS",
+          }),
+          expect.objectContaining({
+            name: "GetImportedUser",
+            kind: "query",
+            filePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
+          }),
+        ])
+      );
+
+      expect(frontendEntities.graphqlUsages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceName: "UserCard",
+            documentName: "GetUser",
+          }),
+          expect.objectContaining({
+            sourceName: "ImportedUserCard",
+            documentName: "GetImportedUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
+          }),
+          expect.objectContaining({
+            sourceName: "RenameUser",
+            documentName: "UpdateUser",
+          }),
+        ])
+      );
+
+      expect(frontendEntities.graphqlFragmentSpreads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceDocumentName: "GetUser",
+            targetFragmentName: "UserFields",
+          }),
+          expect.objectContaining({
+            sourceDocumentName: "UserFields",
+            targetFragmentName: "AvatarFields",
+          }),
+          expect.objectContaining({
+            sourceDocumentName: "GetImportedUser",
+            targetFragmentName: "UserFields",
+            sourceDocumentFilePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
+            targetFragmentFilePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
+          }),
+        ])
+      );
+    });
   });
 
   describe("Python extraction", () => {
@@ -127,6 +205,39 @@ describe("extractGraphEntities", () => {
       const funcNames = entities.functions.map((f) => f.name);
       expect(funcNames).toContain("Greet");
       expect(funcNames).toContain("ValidateEmail");
+    });
+  });
+
+  describe("GraphQL extraction", () => {
+    it("extracts standalone GraphQL operations, fragments, and nested fragment spreads", async () => {
+      const result = await parseFile("tests/fixtures/graphql/UserFields.graphql");
+      const graphqlEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/graphql/UserFields.graphql"
+      );
+      result!.tree.delete();
+
+      expect(graphqlEntities.graphqlDocuments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "GetImportedUser", kind: "query" }),
+          expect.objectContaining({ name: "UserFields", kind: "fragment" }),
+          expect.objectContaining({ name: "AvatarFields", kind: "fragment" }),
+        ])
+      );
+      expect(graphqlEntities.graphqlFragmentSpreads).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceDocumentName: "GetImportedUser",
+            targetFragmentName: "UserFields",
+          }),
+          expect.objectContaining({
+            sourceDocumentName: "UserFields",
+            targetFragmentName: "AvatarFields",
+          }),
+        ])
+      );
     });
   });
 });

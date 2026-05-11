@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { loadConfig } from "../../config.js";
 import { createConnection, type DbConnection } from "../../db/connection.js";
+import { functionCallersQuery } from "../../db/queries.js";
 
 export function registerQueryCommand(program: Command): void {
   program
@@ -28,8 +29,8 @@ export function registerQueryCommand(program: Command): void {
       }
 
       if (opts.callers) {
-        cypher =
-          "MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(callee:Function {name: $name}) RETURN caller.name AS caller, caller.filePath AS file, caller.startLine AS line, type(r) as callType, r.serviceName as rpcService, r.methodName as rpcMethod";
+        const q = functionCallersQuery({ functionName: opts.callers });
+        cypher = q.cypher;
       } else if (opts.dependencies) {
         cypher =
           "MATCH (f:File)-[:IMPORTS]->(dep:File) WHERE f.relativePath = $path OR f.path ENDS WITH $path RETURN dep.relativePath AS dependency";
@@ -39,8 +40,10 @@ export function registerQueryCommand(program: Command): void {
       }
 
       if (cypher) {
-        const params: Record<string, string> = {};
-        if (opts.callers) params.name = opts.callers;
+        const params: Record<string, unknown> = {};
+        if (opts.callers) {
+          Object.assign(params, functionCallersQuery({ functionName: opts.callers }).params);
+        }
         if (opts.dependencies) params.path = opts.dependencies;
         await runQuery(db, cypher, params);
         await db.close();

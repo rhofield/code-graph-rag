@@ -24,6 +24,9 @@ function makeEntities(filePath = "/p/a.ts"): GraphEntities {
     classes: [{ name: "Bar", filePath, startLine: 5, endLine: 10, docstring: null }],
     imports: [],
     calls: [{ callerName: "foo", callerFilePath: filePath, calleeName: "baz" }],
+    graphqlDocuments: [],
+    graphqlUsages: [],
+    graphqlFragmentSpreads: [],
   };
 }
 
@@ -80,6 +83,9 @@ describe("BatchGraphWriter", () => {
       classes: [],
       imports: [],
       calls: [],
+      graphqlDocuments: [],
+      graphqlUsages: [],
+      graphqlFragmentSpreads: [],
     };
     writer.add(entities, makeMeta("/p/a.ts"));
     await writer.flush();
@@ -103,6 +109,76 @@ describe("BatchGraphWriter", () => {
     const writer = new BatchGraphWriter(mockDb as any, { batchSize: 10 });
     writer.add(makeEntities(), makeMeta("/p/a.ts"));
     expect(writer.estimatedMemoryBytes).toBeGreaterThan(0);
+  });
+
+  it("flush() writes GraphQL documents, usages, and fragment spreads", async () => {
+    const writer = new BatchGraphWriter(mockDb as any, { batchSize: 10 });
+    const filePath = "/p/UserCard.tsx";
+    writer.add(
+      {
+        functions: [
+          {
+            name: "UserCard",
+            filePath,
+            startLine: 20,
+            endLine: 25,
+            signature: "function UserCard()",
+            docstring: null,
+            snippet: "function UserCard() { return useQuery(GET_USER); }",
+            className: null,
+          },
+        ],
+        classes: [],
+        imports: [],
+        calls: [],
+        graphqlDocuments: [
+          {
+            name: "GetUser",
+            kind: "query",
+            filePath,
+            startLine: 1,
+            endLine: 8,
+            signature: "query GetUser",
+            snippet: "query GetUser { user { ...UserFields } }",
+            variableName: "GET_USER",
+          },
+          {
+            name: "UserFields",
+            kind: "fragment",
+            filePath,
+            startLine: 10,
+            endLine: 12,
+            signature: "fragment UserFields",
+            snippet: "fragment UserFields on User { id }",
+            variableName: "USER_FIELDS",
+          },
+        ],
+        graphqlUsages: [
+          {
+            sourceName: "UserCard",
+            sourceFilePath: filePath,
+            documentName: "GetUser",
+            documentFilePath: filePath,
+          },
+        ],
+        graphqlFragmentSpreads: [
+          {
+            sourceDocumentName: "GetUser",
+            sourceDocumentFilePath: filePath,
+            targetFragmentName: "UserFields",
+            targetFragmentFilePath: filePath,
+          },
+        ],
+      },
+      makeMeta(filePath)
+    );
+
+    await writer.flush();
+
+    const cyphers = mockRun.mock.calls.map((c: any[]) => c[0] as string).join("\n");
+    expect(cyphers).toContain("GraphQLDocument");
+    expect(cyphers).toContain("USES_GRAPHQL");
+    expect(cyphers).toContain("USES_FRAGMENT");
   });
 
   it("flush resets counters", async () => {

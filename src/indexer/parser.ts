@@ -97,11 +97,20 @@ export async function parseFile(
   const absPath = resolve(filePath);
   if (!existsSync(absPath)) return null;
 
+  const source = readFileSync(absPath, "utf-8");
   const lang = await loadLanguage(language);
-  if (!lang) return null;
+  if (!lang) {
+    if (language === "graphql") {
+      return {
+        tree: { rootNode: null, delete: () => undefined } as unknown as Parser.Tree,
+        language,
+        source,
+      };
+    }
+    return null;
+  }
 
   parser!.setLanguage(lang);
-  const source = readFileSync(absPath, "utf-8");
   const tree = parser!.parse(source);
 
   return { tree, language, source };

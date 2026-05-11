@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Parser from "web-tree-sitter";
+import {
+  extractGraphQLArtifactsFromTypeScript,
+  extractGraphQLUsagesFromFunction,
+  parseGraphQLDocuments,
+  type ExtractedGraphQLDocument,
+  type ExtractedGraphQLFragmentSpread,
+  type ExtractedGraphQLUsage,
+} from "./graphql-detector.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -58,6 +66,9 @@ export interface GraphEntities {
   classes: ExtractedClass[];
   imports: ExtractedImport[];
   calls: ExtractedCall[];
+  graphqlDocuments: ExtractedGraphQLDocument[];
+  graphqlUsages: ExtractedGraphQLUsage[];
+  graphqlFragmentSpreads: ExtractedGraphQLFragmentSpread[];
 }
 
 function getNodeText(node: Parser.SyntaxNode, source: string): string {
@@ -157,9 +168,26 @@ export function extractGraphEntities(
   const classes: ExtractedClass[] = [];
   const imports: ExtractedImport[] = [];
   const calls: ExtractedCall[] = [];
+  let graphqlDocuments: ExtractedGraphQLDocument[] = [];
+  let graphqlUsages: ExtractedGraphQLUsage[] = [];
+  let graphqlFragmentSpreads: ExtractedGraphQLFragmentSpread[] = [];
 
   if (!mapping) {
-    return { functions, classes, imports, calls };
+    return { functions, classes, imports, calls, graphqlDocuments, graphqlUsages, graphqlFragmentSpreads };
+  }
+
+  const graphqlArtifacts =
+    language === "typescript" || language === "tsx" || language === "javascript"
+      ? extractGraphQLArtifactsFromTypeScript(source, absPath)
+      : null;
+
+  if (graphqlArtifacts) {
+    graphqlDocuments = graphqlArtifacts.documents;
+    graphqlFragmentSpreads = graphqlArtifacts.fragmentSpreads;
+  } else if (language === "graphql") {
+    const parsed = parseGraphQLDocuments(source, absPath);
+    graphqlDocuments = parsed.documents;
+    graphqlFragmentSpreads = parsed.fragmentSpreads;
   }
 
   const functionTypes = new Set(mapping.function);
@@ -235,6 +263,16 @@ export function extractGraphEntities(
           mapping.call
         );
         calls.push(...funcCalls);
+        if (graphqlArtifacts) {
+          graphqlUsages.push(
+            ...extractGraphQLUsagesFromFunction(
+              snippet,
+              funcName,
+              absPath,
+              graphqlArtifacts.documentVariables
+            )
+          );
+        }
         return;
       }
     }
@@ -261,7 +299,9 @@ export function extractGraphEntities(
     }
   }
 
-  walkNode(tree.rootNode, null);
+  if (tree.rootNode) {
+    walkNode(tree.rootNode, null);
+  }
 
-  return { functions, classes, imports, calls };
+  return { functions, classes, imports, calls, graphqlDocuments, graphqlUsages, graphqlFragmentSpreads };
 }

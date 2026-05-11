@@ -1,0 +1,15 @@
+fragment AvatarFields on User {
+  avatarUrl
+}
+
+fragment UserFields on User {
+  id
+  name
+  ...AvatarFields
+}
+
+query GetImportedUser($id: ID!) {
+  user(id: $id) {
+    ...UserFields
+  }
+}

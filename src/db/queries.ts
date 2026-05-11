@@ -144,6 +144,58 @@ export function upsertImportSymbol(data: {
   };
 }
 
+export function functionCallersQuery(data: {
+  functionName: string;
+  filePath?: string | null;
+}): CypherQuery {
+  return {
+    cypher: `
+      MATCH (target:Function {name: $functionName})
+      WHERE $filePath IS NULL OR target.filePath = $filePath
+      CALL {
+        WITH target
+        MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(target)
+        RETURN caller,
+               type(r) AS callType,
+               r.serviceName AS rpcService,
+               r.methodName AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole
+        UNION
+        WITH target
+        MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
+        WHERE caller <> target
+        RETURN caller,
+               "USES_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               peerUse.role AS protoRole
+      }
+      RETURN DISTINCT caller.name AS callerName,
+             caller.name AS caller,
+             caller.filePath AS callerFilePath,
+             caller.filePath AS file,
+             caller.signature AS signature,
+             caller.startLine AS startLine,
+             caller.startLine AS line,
+             callType,
+             rpcService,
+             rpcMethod,
+             protoService,
+             protoMethod,
+             protoRole
+      ORDER BY callerFilePath, callerName, callType
+    `,
+    params: {
+      functionName: data.functionName,
+      filePath: data.filePath ?? null,
+    },
+  };
+}
+
 export function batchUpsertFiles(items: Array<{
   path: string; relativePath: string; repoPath: string;
   language: string; hash: string; lastModified: number;
@@ -280,6 +332,71 @@ export function batchUpsertProtoUsageRelationships(items: Array<{
       MERGE (fn)-[r:USES_PROTO {role: item.role}]->(m)
       SET r.serviceName = item.serviceName,
           r.methodName = item.methodName
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLDocuments(items: Array<{
+  name: string;
+  kind: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  signature: string;
+  snippet: string;
+  variableName: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (doc:GraphQLDocument {name: item.name, kind: item.kind, filePath: item.filePath})
+      SET doc.startLine = item.startLine,
+          doc.endLine = item.endLine,
+          doc.signature = item.signature,
+          doc.snippet = item.snippet,
+          doc.variableName = item.variableName
+      WITH item, doc
+      OPTIONAL MATCH (f:File {path: item.filePath})
+      FOREACH (_ IN CASE WHEN f IS NULL THEN [] ELSE [1] END |
+        MERGE (f)-[:CONTAINS]->(doc)
+      )
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLUsages(items: Array<{
+  sourceName: string;
+  sourceFilePath: string;
+  documentName: string;
+  documentFilePath: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (source:Function {name: item.sourceName, filePath: item.sourceFilePath})
+      MATCH (doc:GraphQLDocument {name: item.documentName})
+      WHERE item.documentFilePath IS NULL OR doc.filePath = item.documentFilePath
+      MERGE (source)-[:USES_GRAPHQL]->(doc)
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLFragmentSpreads(items: Array<{
+  sourceDocumentName: string;
+  sourceDocumentFilePath: string;
+  targetFragmentName: string;
+  targetFragmentFilePath: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (source:GraphQLDocument {name: item.sourceDocumentName, filePath: item.sourceDocumentFilePath})
+      MATCH (target:GraphQLDocument {name: item.targetFragmentName, kind: "fragment"})
+      WHERE item.targetFragmentFilePath IS NULL OR target.filePath = item.targetFragmentFilePath
+      MERGE (source)-[:USES_FRAGMENT]->(target)
     `,
     params: { items },
   };

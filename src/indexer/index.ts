@@ -365,7 +365,15 @@ export async function indexRepository(
   // Write yaml/yml files as File nodes (no AST extraction).
   for (const f of yamlFiles) {
     batchWriter.add(
-      { functions: [], classes: [], imports: [], calls: [] },
+      {
+        functions: [],
+        classes: [],
+        imports: [],
+        calls: [],
+        graphqlDocuments: [],
+        graphqlUsages: [],
+        graphqlFragmentSpreads: [],
+      },
       {
         filePath: f,
         relativePath: relative(absRoot, f),

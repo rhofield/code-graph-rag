@@ -12,6 +12,10 @@ import {
   upsertRepositoryWithCommit,
   getRepositoryCommit,
   deleteRepositoryAndFiles,
+  batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLUsages,
+  batchUpsertGraphQLFragmentSpreads,
+  functionCallersQuery,
 } from "../../src/db/queries.js";
 
 describe("query builders", () => {
@@ -128,6 +132,72 @@ describe("query builders", () => {
     const { cypher, params } = getRepositoryCommit({ path: "/project" });
     expect(cypher).toContain("lastIndexedCommit");
     expect(params.path).toBe("/project");
+  });
+
+  it("functionCallersQuery includes proto peers that share a ProtoMethod", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("CALLS|RPC_CALLS");
+    expect(cypher).toContain("USES_PROTO");
+    expect(cypher).toContain("ProtoMethod");
+    expect(cypher).toContain("peerUse.role");
+    expect(params).toEqual({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+  });
+
+  it("batchUpsertGraphQLDocuments merges GraphQLDocument nodes and links files when present", () => {
+    const { cypher, params } = batchUpsertGraphQLDocuments([
+      {
+        name: "GetUser",
+        kind: "query",
+        filePath: "/project/src/User.tsx",
+        startLine: 3,
+        endLine: 9,
+        signature: "query GetUser",
+        snippet: "query GetUser { user { id } }",
+        variableName: "GET_USER",
+      },
+    ]);
+
+    expect(cypher).toContain("GraphQLDocument");
+    expect(cypher).toContain("CONTAINS");
+    expect(cypher).toContain("variableName");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLUsages links frontend functions to GraphQL documents", () => {
+    const { cypher, params } = batchUpsertGraphQLUsages([
+      {
+        sourceName: "UserCard",
+        sourceFilePath: "/project/src/User.tsx",
+        documentName: "GetUser",
+        documentFilePath: "/project/src/User.tsx",
+      },
+    ]);
+
+    expect(cypher).toContain("USES_GRAPHQL");
+    expect(cypher).toContain("GraphQLDocument");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLFragmentSpreads links documents to spread fragments", () => {
+    const { cypher, params } = batchUpsertGraphQLFragmentSpreads([
+      {
+        sourceDocumentName: "GetUser",
+        sourceDocumentFilePath: "/project/src/User.tsx",
+        targetFragmentName: "UserFields",
+        targetFragmentFilePath: "/project/src/User.tsx",
+      },
+    ]);
+
+    expect(cypher).toContain("USES_FRAGMENT");
+    expect(cypher).toContain("GraphQLDocument");
+    expect(params.items).toHaveLength(1);
   });
 });
 

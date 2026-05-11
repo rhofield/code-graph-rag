@@ -10,6 +10,9 @@ export async function setupSchema(db: DbConnection): Promise<void> {
     await session.run(
       "CREATE CONSTRAINT file_path IF NOT EXISTS FOR (f:File) REQUIRE f.path IS UNIQUE"
     );
+    await session.run(
+      "CREATE CONSTRAINT proto_method_key IF NOT EXISTS FOR (m:ProtoMethod) REQUIRE (m.serviceName, m.methodName) IS UNIQUE"
+    );
 
     // Indexes for fast lookup
     await session.run(
@@ -20,6 +23,9 @@ export async function setupSchema(db: DbConnection): Promise<void> {
     );
     await session.run(
       "CREATE INDEX file_language IF NOT EXISTS FOR (f:File) ON (f.language)"
+    );
+    await session.run(
+      "CREATE INDEX function_rpc_handler IF NOT EXISTS FOR (f:Function) ON (f.rpcHandlerService, f.rpcHandlerMethod)"
     );
 
     // Full-text index for search_code

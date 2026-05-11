@@ -1,4 +1,4 @@
-import { resolve, relative } from "node:path";
+import { resolve, relative, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { glob } from "glob";
 import { minimatch } from "minimatch";
@@ -14,9 +14,68 @@ import {
   deleteFileAndRelationships,
   getAllFilePathsUnderPrefix,
   batchDeleteOrphanFiles,
+  batchUpsertProtoDefs,
+  loadAllProtoDefs,
+  batchDeleteOrphanProtoMethods,
 } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
 import { runParallelPipeline } from "./parallel-pipeline.js";
+import { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
+import { parseProtoFiles } from "./proto-parser.js";
+import { detectRpcPatterns, type RpcAnnotation } from "./rpc-detector.js";
+import { linkRpcEdges } from "./rpc-linker.js";
+
+export { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
+
+async function persistProtoDefs(db: DbConnection, registry: ProtoRegistry): Promise<void> {
+  const items = registry.getAllServices().flatMap((svc) =>
+    registry.getServiceMethods(svc).map((def) => ({
+      serviceName: def.serviceName,
+      methodName: def.methodName,
+      methodCamel: def.methodCamel,
+      requestType: def.requestType,
+      responseType: def.responseType,
+      packageName: def.packageName,
+      protoFile: def.protoFile,
+    }))
+  );
+  if (items.length === 0) return;
+  const session = db.session();
+  try {
+    const q = batchUpsertProtoDefs(items);
+    await session.run(q.cypher, q.params);
+  } finally {
+    await session.close();
+  }
+}
+
+async function hydrateProtoRegistry(db: DbConnection, registry: ProtoRegistry): Promise<void> {
+  const session = db.session();
+  try {
+    const q = loadAllProtoDefs();
+    const result = await session.run(q.cypher, q.params);
+    const seen = new Set(
+      registry.getAllServices().flatMap((svc) =>
+        registry.getServiceMethods(svc).map((d) => `${d.serviceName}::${d.methodName}`)
+      )
+    );
+    for (const r of result.records) {
+      const key = `${r.get("serviceName")}::${r.get("methodName")}`;
+      if (seen.has(key)) continue;
+      registry.register({
+        serviceName: r.get("serviceName"),
+        methodName: r.get("methodName"),
+        methodCamel: r.get("methodCamel"),
+        requestType: r.get("requestType"),
+        responseType: r.get("responseType"),
+        packageName: r.get("packageName") ?? "",
+        protoFile: r.get("protoFile") ?? "",
+      });
+    }
+  } finally {
+    await session.close();
+  }
+}
 
 /**
  * Attempt to list files via git, which natively respects .gitignore.
@@ -75,6 +134,7 @@ export interface IndexResult {
   functionsFound: number;
   classesFound: number;
   orphansRemoved: number;
+  rpcEdgesCreated: number;
   errors: Array<{ file: string; error: string }>;
 }
 
@@ -144,6 +204,7 @@ export async function indexRepository(
     specificPath?: string;
     concurrency?: number;
     maxMemoryMB?: number;
+    protoRegistry?: ProtoRegistry;
     onProgress?: (current: number, total: number, file: string) => void;
     onFlushProgress?: (completed: number, total: number) => void;
   } = {}
@@ -158,8 +219,58 @@ export async function indexRepository(
     files = await discoverFiles(absRoot, config);
   }
 
+  // Separate proto files for pre-processing (before language filter)
+  const protoFiles = files.filter((f) => f.endsWith(".proto"));
+  files = files.filter((f) => !f.endsWith(".proto"));
+
   // Filter to supported languages
   files = files.filter((f) => detectLanguage(f) !== null);
+
+  // Parse proto files into registry (always, even for changedOnly)
+  const registry = options.protoRegistry ?? createProtoRegistry();
+  if (protoFiles.length > 0) {
+    parseProtoFiles(protoFiles, registry);
+    // Persist locally-discovered protos so later single-repo indexes can see them.
+    await persistProtoDefs(db, registry);
+  }
+
+  // On single-repo full index runs, prune ProtoMethod nodes that no longer exist
+  // in any parsed proto. Skip for changedOnly (incomplete proto coverage) and for
+  // workspace runs (options.protoRegistry set — pruning would wipe other repos' defs).
+  if (
+    !options.changedOnly &&
+    !options.specificPath &&
+    protoFiles.length > 0 &&
+    !options.protoRegistry
+  ) {
+    const keep = registry.getAllServices().flatMap((svc) =>
+      registry.getServiceMethods(svc).map((d) => ({
+        serviceName: d.serviceName,
+        methodName: d.methodName,
+      }))
+    );
+    if (keep.length > 0) {
+      const session = db.session();
+      try {
+        const prefix = absRoot.endsWith(sep) ? absRoot : absRoot + sep;
+        const q = batchDeleteOrphanProtoMethods(keep, prefix);
+        await session.run(q.cypher, q.params);
+      } finally {
+        await session.close();
+      }
+    }
+  }
+
+  // Hydrate from graph so services defined in other repos (indexed earlier) are
+  // visible to this run's detector. Without this, indexing service-b alone would
+  // skip RPC detection whenever its .proto lives in a separate repo.
+  await hydrateProtoRegistry(db, registry);
+
+  // Create RPC detect function if registry has services
+  const rpcDetectFn = registry.getAllServices().length > 0
+    ? (tree: any, language: string, source: string, filePath: string) =>
+        detectRpcPatterns(tree, language, source, filePath, registry)
+    : undefined;
 
   // Build the full set of discovered file paths for import resolution
   const filePathSet = new Set(files);
@@ -222,26 +333,52 @@ export async function indexRepository(
     }
   }
 
+  // Separate yaml/yml files — the tree-sitter yaml grammar is ABI-incompatible
+  // with web-tree-sitter@0.24.x and throws on every file. Index them as File
+  // nodes only, without AST extraction, similar to how proto files are handled.
+  const yamlFiles = files.filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+  files = files.filter((f) => !f.endsWith(".yaml") && !f.endsWith(".yml"));
+
   const result: IndexResult = {
     filesIndexed: 0,
     functionsFound: 0,
     classesFound: 0,
     orphansRemoved: 0,
+    rpcEdgesCreated: 0,
     errors: [],
   };
+
+  let allRpcAnnotations: RpcAnnotation[] = [];
 
   // Snapshot of what discovery returned, for orphan cleanup later. We capture
   // this before any post-discovery filtering so the cleanup compares against
   // the full set of files we *intend* to manage on this run.
-  const discoveredSet = options.changedOnly ? null : new Set(files);
+  const discoveredSet = options.changedOnly ? null : new Set([...files, ...yamlFiles]);
 
   await writeRepoOnce(db, absRoot);
 
   const concurrency = options.concurrency ?? 8;
   const maxMemoryBytes = (options.maxMemoryMB ?? 8192) * 1024 * 1024;
 
+  const batchWriter = new BatchGraphWriter(db, { filePathSet });
+
+  // Write yaml/yml files as File nodes (no AST extraction).
+  for (const f of yamlFiles) {
+    batchWriter.add(
+      { functions: [], classes: [], imports: [], calls: [] },
+      {
+        filePath: f,
+        relativePath: relative(absRoot, f),
+        repoPath: absRoot,
+        language: "yaml",
+        hash: computeFileHash(f),
+        lastModified: getFileMtime(f),
+      }
+    );
+  }
+  result.filesIndexed += yamlFiles.length;
+
   if (concurrency > 1) {
-    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     const pipelineResult = await runParallelPipeline({
       files,
       absRoot,
@@ -254,14 +391,15 @@ export async function indexRepository(
       getMtimeFn: getFileMtime,
       onProgress: options.onProgress,
       onFlushProgress: options.onFlushProgress,
+      rpcDetectFn,
     });
-    result.filesIndexed = pipelineResult.filesIndexed;
+    result.filesIndexed += pipelineResult.filesIndexed;
     result.functionsFound = pipelineResult.functionsFound;
     result.classesFound = pipelineResult.classesFound;
     result.errors = pipelineResult.errors;
+    allRpcAnnotations = pipelineResult.rpcAnnotations;
   } else {
     // Sequential fallback
-    const batchWriter = new BatchGraphWriter(db, { filePathSet });
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       options.onProgress?.(i + 1, files.length, file);
@@ -271,6 +409,10 @@ export async function indexRepository(
         let entities: ReturnType<typeof extractGraphEntities>;
         try {
           entities = extractGraphEntities(parseResult.tree, parseResult.language, parseResult.source, file);
+          if (rpcDetectFn) {
+            const fileRpcAnnotations = rpcDetectFn(parseResult.tree, parseResult.language, parseResult.source, file);
+            allRpcAnnotations.push(...fileRpcAnnotations);
+          }
         } finally {
           parseResult.tree.delete();
         }
@@ -289,6 +431,13 @@ export async function indexRepository(
     }
     await batchWriter.waitForPendingFlush();
     await batchWriter.flush();
+  }
+
+  // Link RPC edges from annotations
+  const erroredPaths = new Set(result.errors.map((e) => e.file));
+  const touchedFilePaths = files.filter((f) => !erroredPaths.has(f));
+  if (touchedFilePaths.length > 0 || allRpcAnnotations.length > 0) {
+    result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations, touchedFilePaths);
   }
 
   // Orphan cleanup: remove File nodes that exist in the graph under our scope

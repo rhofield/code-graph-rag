@@ -330,3 +330,155 @@ export function batchDeleteOrphanFiles(filePaths: string[]): CypherQuery {
     params: { filePaths },
   };
 }
+
+/**
+ * Delete a Repository node, every File under it (via CONTAINS_FILE), their
+ * Function/Class children, and any ProtoMethod nodes keyed to .proto files
+ * inside the repo. Used when a previously-known subrepo is no longer present.
+ *
+ * Using the CONTAINS_FILE relationship (rather than a path prefix on File)
+ * avoids accidentally matching sibling repos whose paths share a prefix
+ * (e.g. /root/svc-a vs /root/svc-a-old).
+ *
+ * ProtoMethod nodes are matched by protoFile prefix with a trailing separator
+ * for the same reason.
+ *
+ * Inbound RPC_CALLS from surviving cross-repo callers are severed by
+ * DETACH DELETE of the handler functions; re-indexing the caller repo
+ * re-links them.
+ */
+export function deleteRepositoryAndFiles(data: { repoPath: string }): CypherQuery {
+  const repoPathWithSep = data.repoPath.endsWith("/") ? data.repoPath : data.repoPath + "/";
+  return {
+    cypher: `
+      OPTIONAL MATCH (r:Repository {path: $repoPath})
+      OPTIONAL MATCH (r)-[:CONTAINS_FILE]->(f:File)
+      OPTIONAL MATCH (f)-[:CONTAINS]->(child)
+      OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
+      OPTIONAL MATCH (pm:ProtoMethod) WHERE pm.protoFile STARTS WITH $repoPathWithSep
+      DETACH DELETE method, child, f, pm, r
+    `,
+    params: { repoPath: data.repoPath, repoPathWithSep },
+  };
+}
+
+export function batchSetRpcHandlerMeta(items: Array<{
+  functionName: string;
+  filePath: string;
+  rpcService: string;
+  rpcMethod: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      SET fn.rpcHandlerService = item.rpcService,
+          fn.rpcHandlerMethod = item.rpcMethod
+    `,
+    params: { items },
+  };
+}
+
+export function batchSetRpcCallerMeta(items: Array<{
+  functionName: string;
+  filePath: string;
+  rpcServices: string[];
+  rpcMethods: string[];
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      SET fn.rpcCallerServices = item.rpcServices,
+          fn.rpcCallerMethods = item.rpcMethods
+    `,
+    params: { items },
+  };
+}
+
+export function clearRpcMetaForFiles(filePaths: string[]): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $filePaths AS fp
+      MATCH (fn:Function {filePath: fp})
+      OPTIONAL MATCH (fn)-[out:RPC_CALLS]->()
+      OPTIONAL MATCH ()-[inc:RPC_CALLS]->(fn)
+      DELETE out, inc
+      REMOVE fn.rpcCallerServices, fn.rpcCallerMethods,
+             fn.rpcHandlerService, fn.rpcHandlerMethod
+    `,
+    params: { filePaths },
+  };
+}
+
+export function batchUpsertProtoDefs(items: Array<{
+  serviceName: string;
+  methodName: string;
+  methodCamel: string;
+  requestType: string;
+  responseType: string;
+  packageName: string;
+  protoFile: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (m:ProtoMethod {serviceName: item.serviceName, methodName: item.methodName})
+      SET m.methodCamel = item.methodCamel,
+          m.requestType = item.requestType,
+          m.responseType = item.responseType,
+          m.packageName = item.packageName,
+          m.protoFile = item.protoFile
+    `,
+    params: { items },
+  };
+}
+
+export function loadAllProtoDefs(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (m:ProtoMethod)
+      RETURN m.serviceName AS serviceName,
+             m.methodName AS methodName,
+             m.methodCamel AS methodCamel,
+             m.requestType AS requestType,
+             m.responseType AS responseType,
+             m.packageName AS packageName,
+             m.protoFile AS protoFile
+    `,
+    params: {},
+  };
+}
+
+export function batchDeleteOrphanProtoMethods(
+  keep: Array<{ serviceName: string; methodName: string }>,
+  protoFilePathPrefix: string
+): CypherQuery {
+  return {
+    cypher: `
+      WITH [k IN $keep | k.serviceName + "::" + k.methodName] AS keepKeys
+      MATCH (m:ProtoMethod)
+      WHERE m.protoFile STARTS WITH $protoFilePathPrefix
+        AND NOT (m.serviceName + "::" + m.methodName) IN keepKeys
+      DETACH DELETE m
+    `,
+    params: { keep, protoFilePathPrefix },
+  };
+}
+
+export function resolveRpcEdges(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (caller:Function)
+      WHERE caller.rpcCallerServices IS NOT NULL
+      WITH caller, range(0, size(caller.rpcCallerServices) - 1) AS indices
+      UNWIND indices AS i
+      WITH caller, caller.rpcCallerServices[i] AS svc, caller.rpcCallerMethods[i] AS method
+      MATCH (handler:Function {rpcHandlerService: svc, rpcHandlerMethod: method})
+      MERGE (caller)-[r:RPC_CALLS]->(handler)
+      SET r.serviceName = svc, r.methodName = method
+      RETURN count(r) AS edgesCreated
+    `,
+    params: {},
+  };
+}

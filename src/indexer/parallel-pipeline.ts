@@ -1,5 +1,7 @@
 import { relative } from "node:path";
+import type Parser from "web-tree-sitter";
 import type { BatchGraphWriter } from "./batch-writer.js";
+import type { RpcAnnotation } from "./rpc-detector.js";
 
 export class Semaphore {
   private queue: Array<() => void> = [];
@@ -39,6 +41,7 @@ export interface PipelineOptions {
   getMtimeFn: (filePath: string) => number;
   onProgress?: (current: number, total: number, file: string) => void;
   onFlushProgress?: (completed: number, total: number) => void;
+  rpcDetectFn?: (tree: Parser.Tree, language: string, source: string, filePath: string) => RpcAnnotation[];
 }
 
 export interface PipelineResult {
@@ -46,14 +49,15 @@ export interface PipelineResult {
   functionsFound: number;
   classesFound: number;
   errors: Array<{ file: string; error: string }>;
+  rpcAnnotations: RpcAnnotation[];
 }
 
 export async function runParallelPipeline(options: PipelineOptions): Promise<PipelineResult> {
-  const { files, absRoot, concurrency, maxMemoryBytes, parseFn, extractFn, batchWriter, computeHashFn, getMtimeFn, onProgress, onFlushProgress } = options;
+  const { files, absRoot, concurrency, maxMemoryBytes, parseFn, extractFn, batchWriter, computeHashFn, getMtimeFn, onProgress, onFlushProgress, rpcDetectFn } = options;
   if (onFlushProgress) batchWriter.onFlushProgress = onFlushProgress;
 
   const sem = new Semaphore(concurrency);
-  const result: PipelineResult = { filesIndexed: 0, functionsFound: 0, classesFound: 0, errors: [] };
+  const result: PipelineResult = { filesIndexed: 0, functionsFound: 0, classesFound: 0, errors: [], rpcAnnotations: [] };
   let progressCounter = 0;
 
   const tasks = files.map((file) => async () => {
@@ -70,6 +74,12 @@ export async function runParallelPipeline(options: PipelineOptions): Promise<Pip
         let entities: ReturnType<typeof extractFn>;
         try {
           entities = extractFn(parseResult.tree, parseResult.language, parseResult.source, file);
+          if (rpcDetectFn) {
+            const rpcAnns = rpcDetectFn(parseResult.tree, parseResult.language, parseResult.source, file);
+            if (rpcAnns.length > 0) {
+              result.rpcAnnotations.push(...rpcAnns);
+            }
+          }
         } finally {
           parseResult.tree.delete();
         }

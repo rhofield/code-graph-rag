@@ -3,3 +3,4 @@ node_modules/
 dist/
 *.tgz
 .code-graph-rag.json
+yarn.lock

@@ -52,6 +52,22 @@ That's it. Claude Code and Cursor will now have access to the graph tools for th
 
 ---
 
+<<<<<<< HEAD
+## Multi-repo root (microservices)
+
+If you run `rho-graph init` or `index` from a directory that is not itself a git repo but contains microservice repos as subdirectories, rho-graph walks the tree to find them (any dir containing `.git/` is treated as a repo; walk stops at found repos and at `index.exclude` dirs like `node_modules`). The discovered list is written to `.rho-graph.json` and refreshed every 24h (configurable via `discovery.ttlHours`).
+
+Force a refresh manually:
+
+```bash
+rho-graph discover            # walks and updates .rho-graph.json
+rho-graph discover --dry-run  # preview changes, write nothing
+```
+
+---
+
+=======
+>>>>>>> origin/main
 ## CLI reference
 
 | Command | Description |
@@ -191,12 +207,25 @@ Config is resolved in this order (later values win):
     "exclude": ["node_modules", "dist", "vendor", ".git", "build", "__pycache__"],
     "languages": "auto"
   },
+<<<<<<< HEAD
+  "repos": [],
+  "discovery": {
+    "ttlHours": 24,
+    "maxDepth": 6
+  }
+=======
   "repos": []
+>>>>>>> origin/main
 }
 ```
 
 `managed: true` means Neo4j is started automatically via Docker Compose. Set to `false` to connect to an existing instance.
 
+<<<<<<< HEAD
+`discovery` controls the multi-repo walk (see [Multi-repo root](#multi-repo-root-microservices)). `repos` and `lastDiscoveredAt` are managed by `rho-graph discover`; you can pre-seed `repos` manually if you want to override the auto-walk.
+
+=======
+>>>>>>> origin/main
 ### Environment variable overrides
 
 ```bash

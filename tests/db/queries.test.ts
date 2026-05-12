@@ -149,6 +149,8 @@ describe("query builders", () => {
     expect(cypher).toContain("graphqlDocument");
     expect(cypher).toContain("graphqlResolver");
     expect(cypher).toContain("peerUse.role");
+    expect(cypher).toContain('peerUse.role = "consumer"');
+    expect(cypher).toContain('resolverUse.role = "consumer"');
     expect(params).toEqual({
       functionName: "GetUser",
       filePath: "/repo/service/handler.go",

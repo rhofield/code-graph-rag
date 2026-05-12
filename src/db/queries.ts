@@ -197,6 +197,7 @@ export function functionCallersQuery(data: {
         WITH target
         MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
         WHERE caller <> target
+          AND peerUse.role = "consumer"
         RETURN caller,
                "USES_PROTO" AS callType,
                null AS rpcService,
@@ -240,6 +241,7 @@ export function functionCallersQuery(data: {
         WITH target
         MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
         WHERE resolver <> target
+          AND resolverUse.role = "consumer"
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
         MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
         RETURN caller,

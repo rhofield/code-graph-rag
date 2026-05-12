@@ -537,19 +537,15 @@ function parseNamedTypeScriptImports(importText: string): string[] {
     .filter(Boolean);
 }
 
-function protoDefsForImportedName(name: string, registry: ProtoRegistry): ProtoRpcDef[] {
+function parseNamespaceTypeScriptImports(importText: string): string[] {
+  const namespace = importText.match(/import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\b/);
+  return namespace ? [namespace[1]] : [];
+}
+
+function protoDefsForImportedTypeName(name: string, registry: ProtoRegistry): ProtoRpcDef[] {
   const defs: ProtoRpcDef[] = [];
   for (const serviceName of registry.getAllServices()) {
     const serviceMethods = registry.getServiceMethods(serviceName);
-    if (
-      name === serviceName ||
-      name === `${serviceName}Client` ||
-      name === `${serviceName}PromiseClient` ||
-      name === `${serviceName}Service`
-    ) {
-      defs.push(...serviceMethods);
-      continue;
-    }
     for (const def of serviceMethods) {
       if (name === def.requestType || name === def.responseType) {
         defs.push(def);
@@ -563,35 +559,38 @@ function collectTypeScriptProtoImports(
   root: Parser.SyntaxNode,
   source: string,
   registry: ProtoRegistry
-): Map<string, ProtoRpcDef[]> {
+): { named: Map<string, ProtoRpcDef[]>; namespaces: string[] } {
   const imports = new Map<string, ProtoRpcDef[]>();
+  const namespaces: string[] = [];
 
   for (let i = 0; i < root.childCount; i++) {
     const child = root.child(i)!;
     if (child.type !== "import_statement") continue;
 
     const text = getNodeText(child, source);
+    namespaces.push(...parseNamespaceTypeScriptImports(text));
+
     const names = parseNamedTypeScriptImports(text);
     if (names.length === 0) continue;
 
     for (const name of names) {
-      const defs = protoDefsForImportedName(name, registry);
-      if (defs.length > 0) {
+      const defs = protoDefsForImportedTypeName(name, registry);
+      if (defs.length === 1) {
         imports.set(name, defs);
       }
     }
   }
 
-  return imports;
+  return { named: imports, namespaces: [...new Set(namespaces)] };
 }
 
 function detectTypeScriptConsumers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
   const protoImports = collectTypeScriptProtoImports(root, source, registry);
-  if (protoImports.size === 0) return;
+  if (protoImports.named.size === 0 && protoImports.namespaces.length === 0) return;
 
   function annotateIfUsesImportedProto(functionName: string, node: Parser.SyntaxNode): void {
     const text = getNodeText(node, source);
-    for (const [localName, defs] of protoImports) {
+    for (const [localName, defs] of protoImports.named) {
       if (!new RegExp(`\\b${localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text)) continue;
       for (const def of defs) {
         pushUniqueAnnotation(out, {
@@ -600,6 +599,22 @@ function detectTypeScriptConsumers(root: Parser.SyntaxNode, source: string, file
           role: "consumer",
           serviceName: def.serviceName,
           methodName: def.methodName,
+        });
+      }
+    }
+
+    for (const namespace of protoImports.namespaces) {
+      const escaped = namespace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const memberPattern = new RegExp(`\\b${escaped}\\.([A-Za-z_$][A-Za-z0-9_$]*)\\b`, "g");
+      for (const match of text.matchAll(memberPattern)) {
+        const defs = protoDefsForImportedTypeName(match[1], registry);
+        if (defs.length !== 1) continue;
+        pushUniqueAnnotation(out, {
+          functionName,
+          filePath,
+          role: "consumer",
+          serviceName: defs[0].serviceName,
+          methodName: defs[0].methodName,
         });
       }
     }

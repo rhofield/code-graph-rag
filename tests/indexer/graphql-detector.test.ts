@@ -149,4 +149,39 @@ describe("GraphQL detector", () => {
       expect.objectContaining({ name: "UserFields", filePath: documentsPath })
     );
   });
+
+  it("does not follow TypeScript imports from files without GraphQL usage", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rho-graphql-"));
+    const documentsPath = join(dir, "documents.ts");
+    const utilityPath = join(dir, "utility.ts");
+
+    writeFileSync(
+      documentsPath,
+      `
+        import { gql } from "@apollo/client";
+
+        export const GET_USER = gql\`
+          query GetUser {
+            user {
+              id
+            }
+          }
+        \`;
+      `
+    );
+
+    const artifacts = extractGraphQLArtifactsFromTypeScript(
+      `
+        import { GET_USER } from "./documents";
+
+        export function formatUserName(name: string): string {
+          return name.trim();
+        }
+      `,
+      utilityPath
+    );
+
+    expect(artifacts.documents).toEqual([]);
+    expect(artifacts.documentVariables.size).toBe(0);
+  });
 });

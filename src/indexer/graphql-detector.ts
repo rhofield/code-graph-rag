@@ -391,6 +391,16 @@ function extractImportBindings(importClause: string): Array<{ localName: string;
   return bindings;
 }
 
+function hasGraphQLSignal(source: string): boolean {
+  return (
+    /\b(?:gql|graphql)\s*`/.test(source) ||
+    /import\s+[^;]*?\s+from\s+["'][^"']+\.(?:graphql|gql)["']/.test(source) ||
+    /\b(?:useQuery|useSuspenseQuery|useLazyQuery|useMutation|useSubscription|useFragment|readFragment|writeFragment)\s*(?:<[^)]*?>)?\(/.test(source) ||
+    /\b(?:query|mutate|mutation|subscribe|watchQuery|readFragment|writeFragment)\s*\(/.test(source) ||
+    /\buse[A-Z][_0-9A-Za-z]*?(?:LazyQuery|SuspenseQuery|Query|Mutation|Subscription)\s*\(/.test(source)
+  );
+}
+
 export function extractGraphQLArtifactsFromTypeScript(
   source: string,
   filePath: string,
@@ -406,6 +416,8 @@ export function extractGraphQLArtifactsFromTypeScript(
   const assignedTemplateRanges: Array<{ start: number; end: number }> = [];
   const seenDocuments = new Set<string>();
   const seenFragmentSpreads = new Set<string>();
+  const shouldFollowTypeScriptImports = hasGraphQLSignal(source);
+  const shouldFollowTypeScriptExports = shouldFollowTypeScriptImports || visitedFiles.size > 0;
 
   function addDocuments(items: ExtractedGraphQLDocument[]): void {
     for (const document of items) {
@@ -480,52 +492,56 @@ export function extractGraphQLArtifactsFromTypeScript(
     }
   }
 
-  for (const match of source.matchAll(TYPESCRIPT_IMPORT_RE)) {
-    if (/\.(?:graphql|gql)$/.test(match[2])) continue;
-    const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
-    if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
+  if (shouldFollowTypeScriptImports) {
+    for (const match of source.matchAll(TYPESCRIPT_IMPORT_RE)) {
+      if (/\.(?:graphql|gql)$/.test(match[2])) continue;
+      const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
+      if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
 
-    const importedSource = readFileSync(resolvedPath, "utf-8");
-    const imported = extractGraphQLArtifactsFromTypeScript(
-      importedSource,
-      resolvedPath,
-      new Set([...visitedFiles, filePath]),
-      cache
-    );
-    if (imported.documents.length === 0) continue;
+      const importedSource = readFileSync(resolvedPath, "utf-8");
+      const imported = extractGraphQLArtifactsFromTypeScript(
+        importedSource,
+        resolvedPath,
+        new Set([...visitedFiles, filePath]),
+        cache
+      );
+      if (imported.documents.length === 0) continue;
 
-    addDocuments(imported.documents);
-    addFragmentSpreads(imported.fragmentSpreads);
+      addDocuments(imported.documents);
+      addFragmentSpreads(imported.fragmentSpreads);
 
-    for (const binding of extractImportBindings(match[1])) {
-      const document = binding.importedName
-        ? imported.documentVariables.get(binding.importedName)
-        : firstOperationDocument(imported.documents);
-      if (document) documentVariables.set(binding.localName, document);
+      for (const binding of extractImportBindings(match[1])) {
+        const document = binding.importedName
+          ? imported.documentVariables.get(binding.importedName)
+          : firstOperationDocument(imported.documents);
+        if (document) documentVariables.set(binding.localName, document);
+      }
     }
   }
 
-  for (const match of source.matchAll(TYPESCRIPT_EXPORT_FROM_RE)) {
-    const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
-    if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
+  if (shouldFollowTypeScriptExports) {
+    for (const match of source.matchAll(TYPESCRIPT_EXPORT_FROM_RE)) {
+      const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
+      if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
 
-    const importedSource = readFileSync(resolvedPath, "utf-8");
-    const imported = extractGraphQLArtifactsFromTypeScript(
-      importedSource,
-      resolvedPath,
-      new Set([...visitedFiles, filePath]),
-      cache
-    );
-    if (imported.documents.length === 0) continue;
+      const importedSource = readFileSync(resolvedPath, "utf-8");
+      const imported = extractGraphQLArtifactsFromTypeScript(
+        importedSource,
+        resolvedPath,
+        new Set([...visitedFiles, filePath]),
+        cache
+      );
+      if (imported.documents.length === 0) continue;
 
-    addDocuments(imported.documents);
-    addFragmentSpreads(imported.fragmentSpreads);
+      addDocuments(imported.documents);
+      addFragmentSpreads(imported.fragmentSpreads);
 
-    for (const binding of extractImportBindings(match[1])) {
-      const document = binding.importedName
-        ? imported.documentVariables.get(binding.importedName)
-        : firstOperationDocument(imported.documents);
-      if (document) documentVariables.set(binding.localName, document);
+      for (const binding of extractImportBindings(match[1])) {
+        const document = binding.importedName
+          ? imported.documentVariables.get(binding.importedName)
+          : firstOperationDocument(imported.documents);
+        if (document) documentVariables.set(binding.localName, document);
+      }
     }
   }
 

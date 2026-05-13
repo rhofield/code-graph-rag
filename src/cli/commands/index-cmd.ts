@@ -9,6 +9,7 @@ import { printResolveResult, removeRepoFromGraph } from "../../indexer/graph-cle
 import { indexRepository } from "../../indexer/index.js";
 import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
+import { startProgressHeartbeat } from "../progress.js";
 
 export function registerIndexCommand(program: Command): void {
   program
@@ -25,6 +26,7 @@ export function registerIndexCommand(program: Command): void {
       const db = createConnection(config.neo4j);
       const concurrency = parseInt(opts.concurrency, 10);
       const maxMemoryMB = parseInt(opts.maxMemory, 10);
+      const heartbeat = startProgressHeartbeat("Preparing index...");
 
       let repos: RepoEntry[] = [];
       let useWorkspace = false;
@@ -42,15 +44,25 @@ export function registerIndexCommand(program: Command): void {
 
       if (useWorkspace) {
         const spinner = ora(`Indexing workspace (${repos.length} repos)...`).start();
+        heartbeat.update(`Indexing workspace (${repos.length} repos)...`);
         const result = await indexWorkspace(db, workspaceRoot, repos, config.index, {
           changedOnly: opts.changed,
           concurrency,
           maxMemoryMB,
           onRepoStart: (name, _path, i, total) => {
-            spinner.text = `Indexing ${name} (${i + 1}/${total})...`;
+            const message = `Indexing ${name} (${i + 1}/${total})...`;
+            spinner.text = message;
+            heartbeat.update(message);
           },
-          onProgress: (current, total) => {
-            spinner.text = `Parsing... ${current}/${total}`;
+          onProgress: (current, total, file) => {
+            const message = `Parsing... ${current}/${total} (${file})`;
+            spinner.text = message;
+            heartbeat.update(message);
+          },
+          onFlushProgress: (completed, total) => {
+            const message = `Writing to database... ${completed}/${total} batches`;
+            spinner.text = message;
+            heartbeat.update(message);
           },
         });
         const orphanSuffix =
@@ -69,20 +81,26 @@ export function registerIndexCommand(program: Command): void {
           }
         }
         await db.close();
+        heartbeat.stop();
         return;
       }
 
       const spinner = ora("Parsing files...").start();
+      heartbeat.update("Parsing files...");
       const result = await indexRepository(db, workspaceRoot, config.index, {
         changedOnly: opts.changed,
         specificPath: opts.path,
         concurrency,
         maxMemoryMB,
-        onProgress: (current, total) => {
-          spinner.text = `Parsing files... ${current}/${total}`;
+        onProgress: (current, total, file) => {
+          const message = `Parsing files... ${current}/${total} (${file})`;
+          spinner.text = message;
+          heartbeat.update(message);
         },
         onFlushProgress: (completed, total) => {
-          spinner.text = `Writing to database... ${completed}/${total} batches`;
+          const message = `Writing to database... ${completed}/${total} batches`;
+          spinner.text = message;
+          heartbeat.update(message);
         },
       });
       const orphanSuffix =
@@ -101,5 +119,6 @@ export function registerIndexCommand(program: Command): void {
       }
 
       await db.close();
+      heartbeat.stop();
     });
 }

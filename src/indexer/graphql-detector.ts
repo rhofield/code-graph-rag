@@ -34,6 +34,10 @@ export interface GraphQLSourceExtraction {
   fragmentSpreads: ExtractedGraphQLFragmentSpread[];
 }
 
+interface TypeScriptGraphQLExtraction extends GraphQLSourceExtraction {
+  documentVariables: Map<string, ExtractedGraphQLDocument>;
+}
+
 interface DocumentMatch {
   name: string;
   kind: GraphQLDocumentKind;
@@ -280,6 +284,19 @@ function firstOperationDocument(documents: ExtractedGraphQLDocument[]): Extracte
   return documents.find((doc) => doc.kind !== "fragment") ?? documents[0];
 }
 
+function documentKey(document: ExtractedGraphQLDocument): string {
+  return `${document.kind}\0${document.name}\0${document.filePath}`;
+}
+
+function fragmentSpreadKey(spread: ExtractedGraphQLFragmentSpread): string {
+  return [
+    spread.sourceDocumentName,
+    spread.sourceDocumentFilePath,
+    spread.targetFragmentName,
+    spread.targetFragmentFilePath ?? "",
+  ].join("\0");
+}
+
 function resolveFragmentSpreadTargets(
   fragmentSpreads: ExtractedGraphQLFragmentSpread[],
   documents: ExtractedGraphQLDocument[]
@@ -377,16 +394,36 @@ function extractImportBindings(importClause: string): Array<{ localName: string;
 export function extractGraphQLArtifactsFromTypeScript(
   source: string,
   filePath: string,
-  visitedFiles: Set<string> = new Set()
-): {
-  documents: ExtractedGraphQLDocument[];
-  fragmentSpreads: ExtractedGraphQLFragmentSpread[];
-  documentVariables: Map<string, ExtractedGraphQLDocument>;
-} {
+  visitedFiles: Set<string> = new Set(),
+  cache: Map<string, TypeScriptGraphQLExtraction> = new Map()
+): TypeScriptGraphQLExtraction {
+  const cached = cache.get(filePath);
+  if (cached) return cached;
+
   const documents: ExtractedGraphQLDocument[] = [];
   const fragmentSpreads: ExtractedGraphQLFragmentSpread[] = [];
   const documentVariables = new Map<string, ExtractedGraphQLDocument>();
   const assignedTemplateRanges: Array<{ start: number; end: number }> = [];
+  const seenDocuments = new Set<string>();
+  const seenFragmentSpreads = new Set<string>();
+
+  function addDocuments(items: ExtractedGraphQLDocument[]): void {
+    for (const document of items) {
+      const key = documentKey(document);
+      if (seenDocuments.has(key)) continue;
+      seenDocuments.add(key);
+      documents.push(document);
+    }
+  }
+
+  function addFragmentSpreads(items: ExtractedGraphQLFragmentSpread[]): void {
+    for (const spread of items) {
+      const key = fragmentSpreadKey(spread);
+      if (seenFragmentSpreads.has(key)) continue;
+      seenFragmentSpreads.add(key);
+      fragmentSpreads.push(spread);
+    }
+  }
 
   for (const match of source.matchAll(GRAPHQL_TAG_RE)) {
     const variableName = match[1];
@@ -400,8 +437,8 @@ export function extractGraphQLArtifactsFromTypeScript(
       startOffset: templateStart,
       variableName,
     });
-    documents.push(...parsed.documents);
-    fragmentSpreads.push(...parsed.fragmentSpreads);
+    addDocuments(parsed.documents);
+    addFragmentSpreads(parsed.fragmentSpreads);
     if (parsed.documents.length > 0) {
       documentVariables.set(variableName, firstOperationDocument(parsed.documents)!);
     }
@@ -423,8 +460,8 @@ export function extractGraphQLArtifactsFromTypeScript(
       startOffset: templateStart,
       variableName: `__inline_graphql_${inlineCounter}`,
     });
-    documents.push(...parsed.documents);
-    fragmentSpreads.push(...parsed.fragmentSpreads);
+    addDocuments(parsed.documents);
+    addFragmentSpreads(parsed.fragmentSpreads);
   }
 
   for (const match of source.matchAll(GRAPHQL_IMPORT_RE)) {
@@ -434,8 +471,8 @@ export function extractGraphQLArtifactsFromTypeScript(
 
     const imported = parseImportedDocument(resolvedPath);
     if (!imported || imported.documents.length === 0) continue;
-    documents.push(...imported.documents);
-    fragmentSpreads.push(...imported.fragmentSpreads);
+    addDocuments(imported.documents);
+    addFragmentSpreads(imported.fragmentSpreads);
 
     const operation = firstOperationDocument(imported.documents);
     for (const localName of localNames) {
@@ -452,12 +489,13 @@ export function extractGraphQLArtifactsFromTypeScript(
     const imported = extractGraphQLArtifactsFromTypeScript(
       importedSource,
       resolvedPath,
-      new Set([...visitedFiles, filePath])
+      new Set([...visitedFiles, filePath]),
+      cache
     );
     if (imported.documents.length === 0) continue;
 
-    documents.push(...imported.documents);
-    fragmentSpreads.push(...imported.fragmentSpreads);
+    addDocuments(imported.documents);
+    addFragmentSpreads(imported.fragmentSpreads);
 
     for (const binding of extractImportBindings(match[1])) {
       const document = binding.importedName
@@ -475,12 +513,13 @@ export function extractGraphQLArtifactsFromTypeScript(
     const imported = extractGraphQLArtifactsFromTypeScript(
       importedSource,
       resolvedPath,
-      new Set([...visitedFiles, filePath])
+      new Set([...visitedFiles, filePath]),
+      cache
     );
     if (imported.documents.length === 0) continue;
 
-    documents.push(...imported.documents);
-    fragmentSpreads.push(...imported.fragmentSpreads);
+    addDocuments(imported.documents);
+    addFragmentSpreads(imported.fragmentSpreads);
 
     for (const binding of extractImportBindings(match[1])) {
       const document = binding.importedName
@@ -490,11 +529,13 @@ export function extractGraphQLArtifactsFromTypeScript(
     }
   }
 
-  return {
+  const result = {
     documents,
     fragmentSpreads: resolveFragmentSpreadTargets(fragmentSpreads, documents),
     documentVariables,
   };
+  cache.set(filePath, result);
+  return result;
 }
 
 export function extractGraphQLUsagesFromFunction(

@@ -136,6 +136,7 @@ export interface IndexResult {
   classesFound: number;
   orphansRemoved: number;
   rpcEdgesCreated: number;
+  touchedFilePaths: string[];
   errors: Array<{ file: string; error: string }>;
 }
 
@@ -206,6 +207,7 @@ export async function indexRepository(
     concurrency?: number;
     maxMemoryMB?: number;
     protoRegistry?: ProtoRegistry;
+    deferGraphQLResolverLinking?: boolean;
     onProgress?: (current: number, total: number, file: string) => void;
     onFlushProgress?: (completed: number, total: number) => void;
   } = {}
@@ -346,6 +348,7 @@ export async function indexRepository(
     classesFound: 0,
     orphansRemoved: 0,
     rpcEdgesCreated: 0,
+    touchedFilePaths: [],
     errors: [],
   };
 
@@ -445,11 +448,12 @@ export async function indexRepository(
   // Link RPC edges from annotations
   const erroredPaths = new Set(result.errors.map((e) => e.file));
   const touchedFilePaths = files.filter((f) => !erroredPaths.has(f));
+  result.touchedFilePaths = touchedFilePaths;
   if (touchedFilePaths.length > 0 || allRpcAnnotations.length > 0) {
     result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations, touchedFilePaths);
   }
-  if (touchedFilePaths.length > 0) {
-    await linkGraphQLResolverEdges(db);
+  if (touchedFilePaths.length > 0 && !options.deferGraphQLResolverLinking) {
+    await linkGraphQLResolverEdges(db, touchedFilePaths);
   }
 
   // Orphan cleanup: remove File nodes that exist in the graph under our scope

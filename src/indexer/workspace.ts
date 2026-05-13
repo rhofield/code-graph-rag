@@ -56,13 +56,17 @@ export async function indexWorkspace(
       concurrency: options.concurrency,
       maxMemoryMB: options.maxMemoryMB,
       protoRegistry: registry,
+      deferGraphQLResolverLinking: true,
       onProgress: options.onProgress,
       onFlushProgress: options.onFlushProgress,
     });
     results.push({ ...r, repoPath, repoName });
   }
 
-  await linkGraphQLResolverEdges(db);
+  const touchedFilePaths = results.flatMap((r) => r.touchedFilePaths);
+  if (touchedFilePaths.length > 0) {
+    await linkGraphQLResolverEdges(db, touchedFilePaths);
+  }
 
   return {
     repos: results,

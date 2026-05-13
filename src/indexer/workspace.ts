@@ -3,6 +3,7 @@ import type { DbConnection } from "../db/connection.js";
 import type { IndexConfig, RepoEntry } from "../config.js";
 import { createProtoRegistry } from "./proto-registry.js";
 import { indexRepository, type IndexResult } from "./index.js";
+import { linkGraphQLResolverEdges } from "./graphql-linker.js";
 
 export interface WorkspaceRepoResult extends IndexResult {
   repoPath: string;
@@ -60,6 +61,8 @@ export async function indexWorkspace(
     });
     results.push({ ...r, repoPath, repoName });
   }
+
+  await linkGraphQLResolverEdges(db);
 
   return {
     repos: results,

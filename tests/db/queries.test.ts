@@ -16,6 +16,8 @@ import {
   batchUpsertGraphQLUsages,
   batchUpsertGraphQLFragmentSpreads,
   batchUpsertGraphQLResolverLinks,
+  clearGraphQLResolverLinks,
+  resolveGraphQLResolverLinks,
   functionCallersQuery,
 } from "../../src/db/queries.js";
 
@@ -247,6 +249,25 @@ describe("query builders", () => {
     expect(cypher).toContain("USES_FRAGMENT");
     expect(cypher).toContain("GraphQLDocument");
     expect(params.items).toHaveLength(1);
+  });
+
+  it("clearGraphQLResolverLinks deletes stale resolver edges for a relink scope", () => {
+    const { cypher, params } = clearGraphQLResolverLinks(["/project/src/User.tsx"]);
+
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("DELETE r");
+    expect(cypher).toContain("doc.filePath IN $filePaths");
+    expect(params.filePaths).toEqual(["/project/src/User.tsx"]);
+  });
+
+  it("resolveGraphQLResolverLinks recreates resolver edges from stored field names", () => {
+    const { cypher, params } = resolveGraphQLResolverLinks([]);
+
+    expect(cypher).toContain("GraphQLDocument");
+    expect(cypher).toContain("resolverFieldNames");
+    expect(cypher).toContain("MATCH (resolver:Function {name: fieldName})");
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(params.filePaths).toEqual([]);
   });
 });
 

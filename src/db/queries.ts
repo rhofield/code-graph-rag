@@ -456,6 +456,33 @@ export function batchUpsertGraphQLResolverLinks(items: Array<{
   };
 }
 
+export function clearGraphQLResolverLinks(filePaths: string[] = []): CypherQuery {
+  return {
+    cypher: `
+      MATCH (doc:GraphQLDocument)-[r:USES_GRAPHQL_RESOLVER]->()
+      WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
+      DELETE r
+    `,
+    params: { filePaths },
+  };
+}
+
+export function resolveGraphQLResolverLinks(filePaths: string[] = []): CypherQuery {
+  return {
+    cypher: `
+      MATCH (doc:GraphQLDocument)
+      WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
+      WITH doc, coalesce(doc.resolverFieldNames, []) AS resolverFieldNames
+      UNWIND resolverFieldNames AS fieldName
+      MATCH (resolver:Function {name: fieldName})
+      MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+      SET r.fieldName = fieldName
+      RETURN count(r) AS relationshipsCreated
+    `,
+    params: { filePaths },
+  };
+}
+
 export function batchUpsertGraphQLUsages(items: Array<{
   sourceName: string;
   sourceFilePath: string;

@@ -79,6 +79,35 @@ function cleanPropertyName(text: string): string {
   return text.replace(/^['"`]|['"`]$/g, "");
 }
 
+function getPairKey(node: Parser.SyntaxNode, source: string): string | null {
+  if (node.type !== "pair") return null;
+  const keyNode = node.childForFieldName("key");
+  return keyNode ? cleanPropertyName(getNodeText(keyNode, source)) : null;
+}
+
+function isGraphQLRootResolverPair(node: Parser.SyntaxNode, source: string): boolean {
+  const parentObject = node.parent;
+  const parentPair = parentObject?.parent;
+  if (parentObject?.type !== "object" || parentPair?.type !== "pair") return false;
+
+  const rootTypeName = getPairKey(parentPair, source);
+  if (!rootTypeName || !["Query", "Mutation", "Subscription"].includes(rootTypeName)) return false;
+
+  for (let current: Parser.SyntaxNode | null = parentPair; current; current = current.parent) {
+    if (current.type === "pair" && /^resolvers?$/i.test(getPairKey(current, source) ?? "")) {
+      return true;
+    }
+
+    if (current.type === "variable_declarator") {
+      const nameNode = current.childForFieldName("name");
+      const name = nameNode ? getNodeText(nameNode, source) : "";
+      if (/resolvers?/i.test(name)) return true;
+    }
+  }
+
+  return false;
+}
+
 function getDocstring(
   node: Parser.SyntaxNode,
   source: string
@@ -198,6 +227,49 @@ export function extractGraphEntities(
     node: Parser.SyntaxNode,
     currentClassName: string | null
   ): void {
+    if (
+      (language === "typescript" || language === "tsx" || language === "javascript") &&
+      node.type === "pair"
+    ) {
+      const keyNode = node.childForFieldName("key");
+      const valueNode = node.childForFieldName("value");
+      if (keyNode && valueNode) {
+        const funcName = cleanPropertyName(getNodeText(keyNode, source));
+        const valueText = getNodeText(valueNode, source);
+        if (valueText.trimStart().startsWith("function")) {
+          functions.push({
+            name: funcName,
+            filePath: absPath,
+            startLine: node.startPosition.row + 1,
+            endLine: node.endPosition.row + 1,
+            signature: extractSignature(node, source),
+            docstring: getDocstring(node, source),
+            snippet: getNodeText(node, source),
+            className: currentClassName,
+          });
+          calls.push(...walkForCalls(valueNode, source, funcName, absPath, mapping.call));
+          return;
+        }
+        if (
+          /^[A-Za-z_$][_0-9A-Za-z$]*$/.test(valueText.trim()) &&
+          isGraphQLRootResolverPair(node, source)
+        ) {
+          functions.push({
+            name: funcName,
+            filePath: absPath,
+            startLine: node.startPosition.row + 1,
+            endLine: node.endPosition.row + 1,
+            signature: extractSignature(node, source),
+            docstring: getDocstring(node, source),
+            snippet: getNodeText(node, source),
+            className: currentClassName,
+          });
+          calls.push({ callerName: funcName, callerFilePath: absPath, calleeName: valueText.trim() });
+          return;
+        }
+      }
+    }
+
     if (classTypes.has(node.type)) {
       const nameNode = node.childForFieldName(mapping.name_field);
       if (nameNode) {
@@ -269,7 +341,8 @@ export function extractGraphEntities(
               snippet,
               funcName,
               absPath,
-              graphqlArtifacts.documentVariables
+              graphqlArtifacts.documentVariables,
+              graphqlArtifacts.documents
             )
           );
         }

@@ -44,8 +44,12 @@ const DEFINITION_RE = /\b(query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]*
 const FRAGMENT_SPREAD_RE = /\.\.\.\s*(?!on\b)([_A-Za-z][_0-9A-Za-z]*)/g;
 const GRAPHQL_TAG_RE = /(?:^|[^\w$])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][_0-9A-Za-z$]*)[^=]*=\s*(?:gql|graphql)\s*`/g;
 const GRAPHQL_IMPORT_RE = /import\s+([^;]*?)\s+from\s+["']([^"']+\.(?:graphql|gql))["']/g;
+const TYPESCRIPT_IMPORT_RE = /import\s+([^;]*?)\s+from\s+["']([^"']+)["']/g;
+const TYPESCRIPT_EXPORT_FROM_RE = /export\s+([^;]*?)\s+from\s+["']([^"']+)["']/g;
+const ANY_GRAPHQL_TAG_RE = /\b(?:gql|graphql)\s*`/g;
 const GRAPHQL_CALL_ARG_RE = /\b(?:useQuery|useSuspenseQuery|useLazyQuery|useMutation|useSubscription|useFragment|readFragment|writeFragment)\s*(?:<[^)]*?>)?\(\s*([A-Za-z_$][_0-9A-Za-z$]*)/g;
 const GRAPHQL_CLIENT_OBJECT_ARG_RE = /\b(?:query|mutate|mutation|subscribe|watchQuery|readFragment|writeFragment)\s*\(\s*\{[\s\S]{0,800}?\b(?:query|mutation|fragment|document)\s*:\s*([A-Za-z_$][_0-9A-Za-z$]*)/g;
+const APOLLO_GENERATED_HOOK_RE = /\buse([A-Z][_0-9A-Za-z]*?)(LazyQuery|SuspenseQuery|Query|Mutation|Subscription)\s*\(/g;
 
 function lineNumberAt(source: string, index: number): number {
   let line = 1;
@@ -279,6 +283,24 @@ function resolveGraphQLImport(sourceFilePath: string, importSource: string): str
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0] ?? null;
 }
 
+function resolveTypeScriptImport(sourceFilePath: string, importSource: string): string | null {
+  if (!importSource.startsWith(".")) return null;
+  const resolved = resolve(dirname(sourceFilePath), importSource);
+  const candidates = extname(resolved)
+    ? [resolved]
+    : [
+        `${resolved}.ts`,
+        `${resolved}.tsx`,
+        `${resolved}.js`,
+        `${resolved}.jsx`,
+        resolve(resolved, "index.ts"),
+        resolve(resolved, "index.tsx"),
+        resolve(resolved, "index.js"),
+        resolve(resolved, "index.jsx"),
+      ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
 function extractImportLocalNames(importClause: string): string[] {
   const trimmed = importClause.trim();
   const names: string[] = [];
@@ -300,9 +322,30 @@ function extractImportLocalNames(importClause: string): string[] {
   return [...new Set(names)];
 }
 
+function extractImportBindings(importClause: string): Array<{ localName: string; importedName: string | null }> {
+  const trimmed = importClause.trim();
+  const bindings: Array<{ localName: string; importedName: string | null }> = [];
+  const defaultName = trimmed.match(/^([A-Za-z_$][_0-9A-Za-z$]*)/);
+  if (defaultName) bindings.push({ localName: defaultName[1], importedName: null });
+
+  const named = trimmed.match(/\{([^}]+)\}/);
+  if (named) {
+    for (const part of named[1].split(",")) {
+      const clean = part.trim();
+      const alias = clean.match(/^([A-Za-z_$][_0-9A-Za-z$]*)\s+as\s+([A-Za-z_$][_0-9A-Za-z$]*)$/);
+      const direct = clean.match(/^([A-Za-z_$][_0-9A-Za-z$]*)$/);
+      if (alias) bindings.push({ localName: alias[2], importedName: alias[1] });
+      else if (direct) bindings.push({ localName: direct[1], importedName: direct[1] });
+    }
+  }
+
+  return bindings;
+}
+
 export function extractGraphQLArtifactsFromTypeScript(
   source: string,
-  filePath: string
+  filePath: string,
+  visitedFiles: Set<string> = new Set()
 ): {
   documents: ExtractedGraphQLDocument[];
   fragmentSpreads: ExtractedGraphQLFragmentSpread[];
@@ -311,12 +354,14 @@ export function extractGraphQLArtifactsFromTypeScript(
   const documents: ExtractedGraphQLDocument[] = [];
   const fragmentSpreads: ExtractedGraphQLFragmentSpread[] = [];
   const documentVariables = new Map<string, ExtractedGraphQLDocument>();
+  const assignedTemplateRanges: Array<{ start: number; end: number }> = [];
 
   for (const match of source.matchAll(GRAPHQL_TAG_RE)) {
     const variableName = match[1];
     const templateStart = (match.index ?? 0) + match[0].length;
     const templateEnd = findMatchingTemplateEnd(source, templateStart);
     if (templateEnd === -1) continue;
+    assignedTemplateRanges.push({ start: match.index ?? 0, end: templateEnd + 1 });
 
     const templateSource = source.slice(templateStart, templateEnd);
     const parsed = parseGraphQLDocuments(templateSource, filePath, {
@@ -328,6 +373,26 @@ export function extractGraphQLArtifactsFromTypeScript(
     if (parsed.documents.length > 0) {
       documentVariables.set(variableName, parsed.documents[0]);
     }
+  }
+
+  let inlineCounter = 0;
+  for (const match of source.matchAll(ANY_GRAPHQL_TAG_RE)) {
+    const tagStart = match.index ?? 0;
+    if (assignedTemplateRanges.some((range) => tagStart >= range.start && tagStart < range.end)) {
+      continue;
+    }
+    const templateStart = tagStart + match[0].length;
+    const templateEnd = findMatchingTemplateEnd(source, templateStart);
+    if (templateEnd === -1) continue;
+
+    inlineCounter++;
+    const templateSource = source.slice(templateStart, templateEnd);
+    const parsed = parseGraphQLDocuments(templateSource, filePath, {
+      startOffset: templateStart,
+      variableName: `__inline_graphql_${inlineCounter}`,
+    });
+    documents.push(...parsed.documents);
+    fragmentSpreads.push(...parsed.fragmentSpreads);
   }
 
   for (const match of source.matchAll(GRAPHQL_IMPORT_RE)) {
@@ -346,6 +411,53 @@ export function extractGraphQLArtifactsFromTypeScript(
     }
   }
 
+  for (const match of source.matchAll(TYPESCRIPT_IMPORT_RE)) {
+    if (/\.(?:graphql|gql)$/.test(match[2])) continue;
+    const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
+    if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
+
+    const importedSource = readFileSync(resolvedPath, "utf-8");
+    const imported = extractGraphQLArtifactsFromTypeScript(
+      importedSource,
+      resolvedPath,
+      new Set([...visitedFiles, filePath])
+    );
+    if (imported.documents.length === 0) continue;
+
+    documents.push(...imported.documents);
+    fragmentSpreads.push(...imported.fragmentSpreads);
+
+    for (const binding of extractImportBindings(match[1])) {
+      const document = binding.importedName
+        ? imported.documentVariables.get(binding.importedName)
+        : imported.documents.find((doc) => doc.kind !== "fragment") ?? imported.documents[0];
+      if (document) documentVariables.set(binding.localName, document);
+    }
+  }
+
+  for (const match of source.matchAll(TYPESCRIPT_EXPORT_FROM_RE)) {
+    const resolvedPath = resolveTypeScriptImport(filePath, match[2]);
+    if (!resolvedPath || visitedFiles.has(resolvedPath)) continue;
+
+    const importedSource = readFileSync(resolvedPath, "utf-8");
+    const imported = extractGraphQLArtifactsFromTypeScript(
+      importedSource,
+      resolvedPath,
+      new Set([...visitedFiles, filePath])
+    );
+    if (imported.documents.length === 0) continue;
+
+    documents.push(...imported.documents);
+    fragmentSpreads.push(...imported.fragmentSpreads);
+
+    for (const binding of extractImportBindings(match[1])) {
+      const document = binding.importedName
+        ? imported.documentVariables.get(binding.importedName)
+        : imported.documents.find((doc) => doc.kind !== "fragment") ?? imported.documents[0];
+      if (document) documentVariables.set(binding.localName, document);
+    }
+  }
+
   return { documents, fragmentSpreads, documentVariables };
 }
 
@@ -353,10 +465,12 @@ export function extractGraphQLUsagesFromFunction(
   functionSource: string,
   sourceName: string,
   sourceFilePath: string,
-  documentVariables: Map<string, ExtractedGraphQLDocument>
+  documentVariables: Map<string, ExtractedGraphQLDocument>,
+  documents: ExtractedGraphQLDocument[] = [...documentVariables.values()]
 ): ExtractedGraphQLUsage[] {
   const usages: ExtractedGraphQLUsage[] = [];
   const seen = new Set<string>();
+  const documentCandidates = [...documentVariables.values(), ...documents];
 
   function addUsage(variableName: string): void {
     const document = documentVariables.get(variableName);
@@ -377,6 +491,38 @@ export function extractGraphQLUsagesFromFunction(
   }
   for (const match of functionSource.matchAll(GRAPHQL_CLIENT_OBJECT_ARG_RE)) {
     addUsage(match[1]);
+  }
+  for (const match of functionSource.matchAll(APOLLO_GENERATED_HOOK_RE)) {
+    const operationName = match[1];
+    const document = documentCandidates.find((doc) => doc.name === operationName);
+    if (!document) continue;
+    const key = `${sourceName}:${document.name}:${document.filePath}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    usages.push({
+      sourceName,
+      sourceFilePath,
+      documentName: document.name,
+      documentFilePath: document.filePath,
+    });
+  }
+  for (const match of functionSource.matchAll(ANY_GRAPHQL_TAG_RE)) {
+    const templateStart = (match.index ?? 0) + match[0].length;
+    const templateEnd = findMatchingTemplateEnd(functionSource, templateStart);
+    if (templateEnd === -1) continue;
+    const parsed = parseGraphQLDocuments(functionSource.slice(templateStart, templateEnd), sourceFilePath);
+    for (const document of parsed.documents) {
+      if (document.kind === "fragment") continue;
+      const key = `${sourceName}:${document.name}:${sourceFilePath}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      usages.push({
+        sourceName,
+        sourceFilePath,
+        documentName: document.name,
+        documentFilePath: sourceFilePath,
+      });
+    }
   }
 
   return usages;

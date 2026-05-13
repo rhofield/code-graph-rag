@@ -120,6 +120,26 @@ describe("extractGraphEntities", () => {
             resolverFieldNames: ["user"],
             filePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
           }),
+          expect.objectContaining({
+            name: "InlineApolloUser",
+            kind: "query",
+            variableName: expect.stringMatching(/^__inline_graphql_/),
+            resolverFieldNames: ["user"],
+          }),
+          expect.objectContaining({
+            name: "GetApolloUser",
+            kind: "query",
+            variableName: "GET_APOLLO_USER",
+            resolverFieldNames: ["user"],
+            filePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
+          }),
+          expect.objectContaining({
+            name: "UpdateApolloUser",
+            kind: "mutation",
+            variableName: "UPDATE_APOLLO_USER",
+            resolverFieldNames: ["updateUser"],
+            filePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
+          }),
         ])
       );
 
@@ -137,6 +157,30 @@ describe("extractGraphEntities", () => {
           expect.objectContaining({
             sourceName: "RenameUser",
             documentName: "UpdateUser",
+          }),
+          expect.objectContaining({
+            sourceName: "InlineApolloUserCard",
+            documentName: "InlineApolloUser",
+          }),
+          expect.objectContaining({
+            sourceName: "ImportedApolloUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
+          }),
+          expect.objectContaining({
+            sourceName: "ImportedApolloRename",
+            documentName: "UpdateApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
+          }),
+          expect.objectContaining({
+            sourceName: "BarrelApolloUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
+          }),
+          expect.objectContaining({
+            sourceName: "GeneratedApolloUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-documents.ts"),
           }),
         ])
       );
@@ -156,6 +200,90 @@ describe("extractGraphEntities", () => {
             targetFragmentName: "UserFields",
             sourceDocumentFilePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
             targetFragmentFilePath: expect.stringContaining("tests/fixtures/graphql/UserFields.graphql"),
+          }),
+        ])
+      );
+    });
+
+    it("extracts Apollo resolver object method, function-expression, and alias syntax", async () => {
+      const result = await parseFile("tests/fixtures/graphql/apollo-resolver-syntax.ts");
+      const resolverEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/graphql/apollo-resolver-syntax.ts"
+      );
+      result!.tree.delete();
+
+      expect(resolverEntities.functions.map((f) => f.name)).toEqual(
+        expect.arrayContaining(["user", "viewer", "me", "getUserResolver"])
+      );
+      expect(resolverEntities.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ callerName: "user", calleeName: "getUser" }),
+          expect.objectContaining({ callerName: "viewer", calleeName: "getUser" }),
+          expect.objectContaining({ callerName: "me", calleeName: "getUserResolver" }),
+        ])
+      );
+    });
+
+    it("does not extract arbitrary object aliases as resolver functions", async () => {
+      const result = await parseFile("tests/fixtures/graphql/non-resolver-aliases.ts");
+      const aliasEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/graphql/non-resolver-aliases.ts"
+      );
+      result!.tree.delete();
+
+      const aliases = aliasEntities.functions.filter((f) => f.name === "user");
+      expect(aliases).toEqual([]);
+      expect(aliasEntities.calls).not.toContainEqual(
+        expect.objectContaining({ callerName: "user", calleeName: "UserPage" })
+      );
+      expect(aliasEntities.calls).not.toContainEqual(
+        expect.objectContaining({ callerName: "user", calleeName: "currentUser" })
+      );
+    });
+
+    it("links generated Apollo hooks imported without document constants", async () => {
+      const result = await parseFile("tests/fixtures/graphql/generated-hook-usage.tsx");
+      const hookEntities = extractGraphEntities(
+        result!.tree,
+        result!.language,
+        result!.source,
+        "tests/fixtures/graphql/generated-hook-usage.tsx"
+      );
+      result!.tree.delete();
+
+      expect(hookEntities.graphqlDocuments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "GetApolloUser",
+            kind: "query",
+            variableName: "GET_APOLLO_USER",
+            resolverFieldNames: ["user"],
+            filePath: expect.stringContaining("tests/fixtures/graphql/apollo-generated-hooks.ts"),
+          }),
+        ])
+      );
+      expect(hookEntities.graphqlUsages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceName: "ImportedGeneratedApolloUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-generated-hooks.ts"),
+          }),
+          expect.objectContaining({
+            sourceName: "ImportedGeneratedApolloLazyUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-generated-hooks.ts"),
+          }),
+          expect.objectContaining({
+            sourceName: "ImportedGeneratedApolloSuspenseUserCard",
+            documentName: "GetApolloUser",
+            documentFilePath: expect.stringContaining("tests/fixtures/graphql/apollo-generated-hooks.ts"),
           }),
         ])
       );

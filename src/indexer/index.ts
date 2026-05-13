@@ -24,6 +24,7 @@ import { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
 import { parseProtoFiles } from "./proto-parser.js";
 import { detectRpcPatterns, type RpcAnnotation } from "./rpc-detector.js";
 import { linkRpcEdges } from "./rpc-linker.js";
+import { linkGraphQLResolverEdges } from "./graphql-linker.js";
 
 export { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
 
@@ -446,6 +447,9 @@ export async function indexRepository(
   const touchedFilePaths = files.filter((f) => !erroredPaths.has(f));
   if (touchedFilePaths.length > 0 || allRpcAnnotations.length > 0) {
     result.rpcEdgesCreated = await linkRpcEdges(db, allRpcAnnotations, touchedFilePaths);
+  }
+  if (touchedFilePaths.length > 0) {
+    await linkGraphQLResolverEdges(db);
   }
 
   // Orphan cleanup: remove File nodes that exist in the graph under our scope

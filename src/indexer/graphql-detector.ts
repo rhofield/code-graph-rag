@@ -276,6 +276,38 @@ function parseImportedDocument(importPath: string): GraphQLSourceExtraction | nu
   return parseGraphQLDocuments(source, importPath);
 }
 
+function firstOperationDocument(documents: ExtractedGraphQLDocument[]): ExtractedGraphQLDocument | undefined {
+  return documents.find((doc) => doc.kind !== "fragment") ?? documents[0];
+}
+
+function resolveFragmentSpreadTargets(
+  fragmentSpreads: ExtractedGraphQLFragmentSpread[],
+  documents: ExtractedGraphQLDocument[]
+): ExtractedGraphQLFragmentSpread[] {
+  const fragmentPathsByName = new Map<string, Set<string>>();
+  for (const document of documents) {
+    if (document.kind !== "fragment") continue;
+    const paths = fragmentPathsByName.get(document.name) ?? new Set<string>();
+    paths.add(document.filePath);
+    fragmentPathsByName.set(document.name, paths);
+  }
+
+  return fragmentSpreads.map((spread) => {
+    const paths = fragmentPathsByName.get(spread.targetFragmentName);
+    if (!paths || paths.size === 0) return spread;
+
+    if (paths.size === 1) {
+      return { ...spread, targetFragmentFilePath: [...paths][0] };
+    }
+
+    if (paths.has(spread.sourceDocumentFilePath)) {
+      return { ...spread, targetFragmentFilePath: spread.sourceDocumentFilePath };
+    }
+
+    return spread;
+  });
+}
+
 function resolveGraphQLImport(sourceFilePath: string, importSource: string): string | null {
   if (!importSource.startsWith(".")) return null;
   const resolved = resolve(dirname(sourceFilePath), importSource);
@@ -371,7 +403,7 @@ export function extractGraphQLArtifactsFromTypeScript(
     documents.push(...parsed.documents);
     fragmentSpreads.push(...parsed.fragmentSpreads);
     if (parsed.documents.length > 0) {
-      documentVariables.set(variableName, parsed.documents[0]);
+      documentVariables.set(variableName, firstOperationDocument(parsed.documents)!);
     }
   }
 
@@ -405,9 +437,9 @@ export function extractGraphQLArtifactsFromTypeScript(
     documents.push(...imported.documents);
     fragmentSpreads.push(...imported.fragmentSpreads);
 
-    const operation = imported.documents.find((doc) => doc.kind !== "fragment") ?? imported.documents[0];
+    const operation = firstOperationDocument(imported.documents);
     for (const localName of localNames) {
-      documentVariables.set(localName, operation);
+      if (operation) documentVariables.set(localName, operation);
     }
   }
 
@@ -430,7 +462,7 @@ export function extractGraphQLArtifactsFromTypeScript(
     for (const binding of extractImportBindings(match[1])) {
       const document = binding.importedName
         ? imported.documentVariables.get(binding.importedName)
-        : imported.documents.find((doc) => doc.kind !== "fragment") ?? imported.documents[0];
+        : firstOperationDocument(imported.documents);
       if (document) documentVariables.set(binding.localName, document);
     }
   }
@@ -453,12 +485,16 @@ export function extractGraphQLArtifactsFromTypeScript(
     for (const binding of extractImportBindings(match[1])) {
       const document = binding.importedName
         ? imported.documentVariables.get(binding.importedName)
-        : imported.documents.find((doc) => doc.kind !== "fragment") ?? imported.documents[0];
+        : firstOperationDocument(imported.documents);
       if (document) documentVariables.set(binding.localName, document);
     }
   }
 
-  return { documents, fragmentSpreads, documentVariables };
+  return {
+    documents,
+    fragmentSpreads: resolveFragmentSpreadTargets(fragmentSpreads, documents),
+    documentVariables,
+  };
 }
 
 export function extractGraphQLUsagesFromFunction(

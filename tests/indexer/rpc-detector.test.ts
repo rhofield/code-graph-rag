@@ -215,6 +215,14 @@ describe("RPC Detector — TypeScript", () => {
     });
   });
 
+  it("does not treat local DTO imports as proto consumers", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-local-dto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-local-dto-consumer.ts", registry);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "consumer")).toEqual([]);
+  });
+
   it("detects GraphQL resolvers consuming generated proto types through namespace imports", async () => {
     const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-namespace-proto-consumer.ts"));
     const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-namespace-proto-consumer.ts", registry);

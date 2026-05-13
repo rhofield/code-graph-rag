@@ -542,6 +542,23 @@ function parseNamespaceTypeScriptImports(importText: string): string[] {
   return namespace ? [namespace[1]] : [];
 }
 
+function parseTypeScriptImportSource(importText: string): string | null {
+  const source = importText.match(/\bfrom\s+["']([^"']+)["']/);
+  return source ? source[1] : null;
+}
+
+function isTypeScriptProtoImportSource(importSource: string): boolean {
+  const source = importSource.toLowerCase();
+  return (
+    source.includes("bufbuild") ||
+    source.includes("_grpc_pb") ||
+    source.includes("_pb") ||
+    source.includes("grpc") ||
+    source.includes("protobuf") ||
+    /(^|[/_.-])proto(s)?([/_.-]|$)/.test(source)
+  );
+}
+
 function protoDefsForImportedTypeName(name: string, registry: ProtoRegistry): ProtoRpcDef[] {
   const defs: ProtoRpcDef[] = [];
   for (const serviceName of registry.getAllServices()) {
@@ -568,6 +585,9 @@ function collectTypeScriptProtoImports(
     if (child.type !== "import_statement") continue;
 
     const text = getNodeText(child, source);
+    const importSource = parseTypeScriptImportSource(text);
+    if (!importSource || !isTypeScriptProtoImportSource(importSource)) continue;
+
     namespaces.push(...parseNamespaceTypeScriptImports(text));
 
     const names = parseNamedTypeScriptImports(text);

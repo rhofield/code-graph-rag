@@ -80,12 +80,24 @@ function pickByReceiver<T extends { serviceName: string }>(
 
 // --- Gate checks: does this file import gRPC-generated code? ---
 
-export function hasGrpcImportsGo(root: Parser.SyntaxNode, source: string): boolean {
+export function hasGrpcImportsGo(
+  root: Parser.SyntaxNode,
+  source: string,
+  registry?: ProtoRegistry
+): boolean {
   for (let i = 0; i < root.childCount; i++) {
     const child = root.child(i)!;
     if (child.type === "import_declaration") {
       const text = getNodeText(child, source);
       if (/pb["'\s]|proto["'\s]|grpc["'\s]/i.test(text)) return true;
+      // The path-name heuristic above misses codegen layouts like buf's gen/
+      // directories. The proto's `option go_package` declares the exact import
+      // path of generated code, so match import strings against the registry.
+      if (registry) {
+        for (const match of text.matchAll(/"([^"]+)"/g)) {
+          if (registry.hasGoPackagePath(match[1])) return true;
+        }
+      }
     }
   }
   return false;
@@ -742,7 +754,7 @@ function detectJavaCalls(root: Parser.SyntaxNode, source: string, filePath: stri
 // --- Per-language dispatch ---
 
 function detectGo(tree: Parser.Tree, source: string, filePath: string, registry: ProtoRegistry): RpcAnnotation[] {
-  if (!hasGrpcImportsGo(tree.rootNode, source)) return [];
+  if (!hasGrpcImportsGo(tree.rootNode, source, registry)) return [];
   const out: RpcAnnotation[] = [];
   detectGoHandlers(tree.rootNode, source, filePath, registry, out);
   detectGoCalls(tree.rootNode, source, filePath, registry, out);

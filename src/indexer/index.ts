@@ -42,6 +42,7 @@ async function persistProtoDefs(db: DbConnection, registry: ProtoRegistry): Prom
       responseType: def.responseType,
       packageName: def.packageName,
       protoFile: def.protoFile,
+      goPackage: def.goPackage,
     }))
   );
   const messageItems = registry.getAllMessages();
@@ -82,6 +83,7 @@ async function hydrateProtoRegistry(db: DbConnection, registry: ProtoRegistry): 
         responseType: r.get("responseType"),
         packageName: r.get("packageName") ?? "",
         protoFile: r.get("protoFile") ?? "",
+        goPackage: r.get("goPackage") ?? undefined,
       });
     }
 
@@ -98,6 +100,7 @@ async function hydrateProtoRegistry(db: DbConnection, registry: ProtoRegistry): 
         messageName,
         packageName,
         protoFile: r.get("protoFile") ?? "",
+        goPackage: r.get("goPackage") ?? undefined,
       });
     }
   } finally {

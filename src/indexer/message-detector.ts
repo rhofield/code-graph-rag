@@ -194,7 +194,7 @@ function detectGo(
   registry: ProtoRegistry,
   out: MessageAnnotation[]
 ): void {
-  if (!hasGrpcImportsGo(root, source)) return;
+  if (!hasGrpcImportsGo(root, source, registry)) return;
 
   // Only consider unambiguous message names; bare-name matching across
   // packages would otherwise mislink same-named events.

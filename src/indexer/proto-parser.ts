@@ -31,6 +31,12 @@ export function parseProtoSource(
   const pkgMatch = stripped.match(/package\s+([\w.]+)\s*;/);
   const packageName = pkgMatch ? pkgMatch[1] : "";
 
+  // Extract the go_package import path (the part before any ";alias"). This
+  // is the exact path generated Go code is imported from, which lets the Go
+  // detectors recognize proto usage without relying on path-name heuristics.
+  const goPkgMatch = stripped.match(/option\s+go_package\s*=\s*"([^";]+)(?:;[^"]*)?"\s*;/);
+  const goPackage = goPkgMatch ? goPkgMatch[1] : undefined;
+
   // Extract services and their RPCs using brace-depth scanner
   const serviceRegex = /service\s+(\w+)\s*\{/g;
   const rpcRegex = /rpc\s+(\w+)\s*\(\s*(?:stream\s+)?(\w+)\s*\)\s*returns\s*\(\s*(?:stream\s+)?(\w+)\s*\)/g;
@@ -44,6 +50,7 @@ export function parseProtoSource(
       messageName: messageMatch[1],
       packageName,
       protoFile: filePath,
+      goPackage,
     });
   }
 
@@ -65,6 +72,7 @@ export function parseProtoSource(
         responseType: rpcMatch[3],
         packageName,
         protoFile: filePath,
+        goPackage,
       });
     }
   }

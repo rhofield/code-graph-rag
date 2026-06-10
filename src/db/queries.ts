@@ -692,6 +692,7 @@ export function batchUpsertProtoDefs(items: Array<{
   responseType: string;
   packageName: string;
   protoFile: string;
+  goPackage?: string;
 }>): CypherQuery {
   return {
     cypher: `
@@ -701,9 +702,10 @@ export function batchUpsertProtoDefs(items: Array<{
           m.requestType = item.requestType,
           m.responseType = item.responseType,
           m.packageName = item.packageName,
-          m.protoFile = item.protoFile
+          m.protoFile = item.protoFile,
+          m.goPackage = item.goPackage
     `,
-    params: { items },
+    params: { items: items.map((i) => ({ ...i, goPackage: i.goPackage ?? null })) },
   };
 }
 
@@ -717,7 +719,8 @@ export function loadAllProtoDefs(): CypherQuery {
              m.requestType AS requestType,
              m.responseType AS responseType,
              m.packageName AS packageName,
-             m.protoFile AS protoFile
+             m.protoFile AS protoFile,
+             m.goPackage AS goPackage
     `,
     params: {},
   };
@@ -743,14 +746,16 @@ export function batchUpsertProtoMessages(items: Array<{
   messageName: string;
   packageName: string;
   protoFile: string;
+  goPackage?: string;
 }>): CypherQuery {
   return {
     cypher: `
       UNWIND $items AS item
       MERGE (m:ProtoMessage {messageName: item.messageName, packageName: item.packageName})
-      SET m.protoFile = item.protoFile
+      SET m.protoFile = item.protoFile,
+          m.goPackage = item.goPackage
     `,
-    params: { items },
+    params: { items: items.map((i) => ({ ...i, goPackage: i.goPackage ?? null })) },
   };
 }
 
@@ -760,7 +765,8 @@ export function loadAllProtoMessages(): CypherQuery {
       MATCH (m:ProtoMessage)
       RETURN m.messageName AS messageName,
              m.packageName AS packageName,
-             m.protoFile AS protoFile
+             m.protoFile AS protoFile,
+             m.goPackage AS goPackage
     `,
     params: {},
   };

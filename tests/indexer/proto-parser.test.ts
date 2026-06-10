@@ -211,6 +211,43 @@ describe("parseProtoSource", () => {
     expect(reg.getAllMessages().map((m) => m.messageName)).toEqual(["Real"]);
   });
 
+  it("extracts the go_package import path onto messages and RPCs", () => {
+    const source = `
+      syntax = "proto3";
+      package events.v1;
+
+      option go_package = "example.com/backend/gen/events/v1;eventsv1";
+
+      message UserCreated { string id = 1; }
+
+      service EventService {
+        rpc Emit (UserCreated) returns (UserCreated);
+      }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/events.proto", reg);
+
+    expect(reg.lookupMessage("UserCreated")[0].goPackage).toBe("example.com/backend/gen/events/v1");
+    expect(reg.lookup("EventService", "Emit")!.goPackage).toBe("example.com/backend/gen/events/v1");
+    expect(reg.hasGoPackagePath("example.com/backend/gen/events/v1")).toBe(true);
+    expect(reg.hasGoPackagePath("example.com/unrelated")).toBe(false);
+  });
+
+  it("handles go_package without an alias suffix", () => {
+    const source = `
+      syntax = "proto3";
+      package events.v1;
+
+      option go_package = "example.com/backend/gen/events/v1";
+
+      message UserCreated { string id = 1; }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/events.proto", reg);
+
+    expect(reg.lookupMessage("UserCreated")[0].goPackage).toBe("example.com/backend/gen/events/v1");
+  });
+
   it("handles nested brace blocks inside service (e.g. inline message)", () => {
     const source = `
       syntax = "proto3";

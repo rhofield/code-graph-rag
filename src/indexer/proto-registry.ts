@@ -6,20 +6,35 @@ export interface ProtoRpcDef {
   responseType: string;
   packageName: string;
   protoFile: string;
+  goPackage?: string;
 }
 
 export interface ProtoMessageDef {
   messageName: string;
   packageName: string;
   protoFile: string;
+  goPackage?: string;
 }
 
 export class ProtoRegistry {
   private services = new Map<string, Map<string, ProtoRpcDef>>();
   private methodIndex = new Map<string, ProtoRpcDef[]>();
   private messages = new Map<string, ProtoMessageDef>();
+  // Import paths declared via `option go_package`. Generated Go code lives at
+  // exactly these paths, so a Go file importing one is proto-relevant even
+  // when the path contains no "pb"/"proto"/"grpc" token (e.g. buf gen/ dirs).
+  private goPackages = new Set<string>();
+
+  private trackGoPackage(goPackage: string | undefined): void {
+    if (goPackage) this.goPackages.add(goPackage);
+  }
+
+  hasGoPackagePath(importPath: string): boolean {
+    return this.goPackages.has(importPath);
+  }
 
   register(def: ProtoRpcDef): void {
+    this.trackGoPackage(def.goPackage);
     if (!this.services.has(def.serviceName)) {
       this.services.set(def.serviceName, new Map());
     }
@@ -62,6 +77,7 @@ export class ProtoRegistry {
   }
 
   registerMessage(def: ProtoMessageDef): void {
+    this.trackGoPackage(def.goPackage);
     this.messages.set(`${def.packageName}::${def.messageName}`, def);
   }
 

@@ -80,7 +80,7 @@ function pickByReceiver<T extends { serviceName: string }>(
 
 // --- Gate checks: does this file import gRPC-generated code? ---
 
-function hasGrpcImportsGo(root: Parser.SyntaxNode, source: string): boolean {
+export function hasGrpcImportsGo(root: Parser.SyntaxNode, source: string): boolean {
   for (let i = 0; i < root.childCount; i++) {
     const child = root.child(i)!;
     if (child.type === "import_declaration") {
@@ -523,7 +523,7 @@ function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath
   walkFns(root);
 }
 
-function parseNamedTypeScriptImports(importText: string): string[] {
+export function parseNamedTypeScriptImports(importText: string): string[] {
   const named = importText.match(/\{([\s\S]*?)\}/);
   if (!named) return [];
   return named[1]
@@ -537,17 +537,17 @@ function parseNamedTypeScriptImports(importText: string): string[] {
     .filter(Boolean);
 }
 
-function parseNamespaceTypeScriptImports(importText: string): string[] {
+export function parseNamespaceTypeScriptImports(importText: string): string[] {
   const namespace = importText.match(/import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\b/);
   return namespace ? [namespace[1]] : [];
 }
 
-function parseTypeScriptImportSource(importText: string): string | null {
+export function parseTypeScriptImportSource(importText: string): string | null {
   const source = importText.match(/\bfrom\s+["']([^"']+)["']/);
   return source ? source[1] : null;
 }
 
-function isTypeScriptProtoImportSource(importSource: string): boolean {
+export function isTypeScriptProtoImportSource(importSource: string): boolean {
   const source = importSource.toLowerCase();
   return (
     source.includes("bufbuild") ||

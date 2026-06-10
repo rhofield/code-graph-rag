@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createConnection } from "../../src/db/connection.js";
+import { createTestConnection } from "../helpers/test-db.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { indexRepository } from "../../src/indexer/index.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
@@ -50,11 +51,7 @@ export class AppService {
     );
 
     // Connect to Neo4j
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
   });
 

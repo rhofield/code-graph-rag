@@ -468,16 +468,33 @@ export function clearGraphQLResolverLinks(filePaths: string[] = []): CypherQuery
 }
 
 export function resolveGraphQLResolverLinks(filePaths: string[] = []): CypherQuery {
+  // Two scopes, deduplicated by MERGE:
+  // 1. doc-side — documents in the touched files link to any matching resolver
+  // 2. resolver-side — functions in the touched files link back from any
+  //    document whose fields reference them. Without this, re-indexing only
+  //    the resolver repo (e.g. after a resolver is renamed to match a new
+  //    operation field) never relinks documents whose own files were untouched.
   return {
     cypher: `
-      MATCH (doc:GraphQLDocument)
-      WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
-      WITH doc, coalesce(doc.resolverFieldNames, []) AS resolverFieldNames
-      UNWIND resolverFieldNames AS fieldName
-      MATCH (resolver:Function {name: fieldName})
-      MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
-      SET r.fieldName = fieldName
-      RETURN count(r) AS relationshipsCreated
+      CALL {
+        MATCH (doc:GraphQLDocument)
+        WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
+        WITH doc, coalesce(doc.resolverFieldNames, []) AS resolverFieldNames
+        UNWIND resolverFieldNames AS fieldName
+        MATCH (resolver:Function {name: fieldName})
+        MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+        SET r.fieldName = fieldName
+        RETURN count(r) AS created
+        UNION ALL
+        MATCH (resolver:Function)
+        WHERE size($filePaths) > 0 AND resolver.filePath IN $filePaths
+        MATCH (doc:GraphQLDocument)
+        WHERE resolver.name IN coalesce(doc.resolverFieldNames, [])
+        MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+        SET r.fieldName = resolver.name
+        RETURN count(r) AS created
+      }
+      RETURN sum(created) AS relationshipsCreated
     `,
     params: { filePaths },
   };
@@ -610,7 +627,8 @@ export function deleteRepositoryAndFiles(data: { repoPath: string }): CypherQuer
       OPTIONAL MATCH (f)-[:CONTAINS]->(child)
       OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
       OPTIONAL MATCH (pm:ProtoMethod) WHERE pm.protoFile STARTS WITH $repoPathWithSep
-      DETACH DELETE method, child, f, pm, r
+      OPTIONAL MATCH (pmsg:ProtoMessage) WHERE pmsg.protoFile STARTS WITH $repoPathWithSep
+      DETACH DELETE method, child, f, pm, pmsg, r
     `,
     params: { repoPath: data.repoPath, repoPathWithSep },
   };
@@ -657,7 +675,7 @@ export function clearRpcMetaForFiles(filePaths: string[]): CypherQuery {
       MATCH (fn:Function {filePath: fp})
       OPTIONAL MATCH (fn)-[out:RPC_CALLS]->()
       OPTIONAL MATCH ()-[inc:RPC_CALLS]->(fn)
-      OPTIONAL MATCH (fn)-[protoUse:USES_PROTO]->(:ProtoMethod)
+      OPTIONAL MATCH (fn)-[protoUse:USES_PROTO]->()
       DELETE out, inc, protoUse
       REMOVE fn.rpcCallerServices, fn.rpcCallerMethods,
              fn.rpcHandlerService, fn.rpcHandlerMethod
@@ -718,6 +736,69 @@ export function batchDeleteOrphanProtoMethods(
       DETACH DELETE m
     `,
     params: { keep, protoFilePathPrefix },
+  };
+}
+
+export function batchUpsertProtoMessages(items: Array<{
+  messageName: string;
+  packageName: string;
+  protoFile: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (m:ProtoMessage {messageName: item.messageName, packageName: item.packageName})
+      SET m.protoFile = item.protoFile
+    `,
+    params: { items },
+  };
+}
+
+export function loadAllProtoMessages(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (m:ProtoMessage)
+      RETURN m.messageName AS messageName,
+             m.packageName AS packageName,
+             m.protoFile AS protoFile
+    `,
+    params: {},
+  };
+}
+
+export function batchDeleteOrphanProtoMessages(
+  keep: Array<{ messageName: string; packageName: string }>,
+  protoFilePathPrefix: string
+): CypherQuery {
+  return {
+    cypher: `
+      WITH [k IN $keep | k.packageName + "::" + k.messageName] AS keepKeys
+      MATCH (m:ProtoMessage)
+      WHERE m.protoFile STARTS WITH $protoFilePathPrefix
+        AND NOT (m.packageName + "::" + m.messageName) IN keepKeys
+      DETACH DELETE m
+    `,
+    params: { keep, protoFilePathPrefix },
+  };
+}
+
+export function batchUpsertMessageUsageRelationships(items: Array<{
+  functionName: string;
+  filePath: string;
+  role: "producer" | "consumer" | "uses";
+  messageName: string;
+  packageName: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      MATCH (m:ProtoMessage {messageName: item.messageName, packageName: item.packageName})
+      MERGE (fn)-[r:USES_PROTO {role: item.role}]->(m)
+      SET r.messageName = item.messageName,
+          r.packageName = item.packageName
+    `,
+    params: { items },
   };
 }
 

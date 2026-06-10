@@ -1,16 +1,24 @@
 import type { DbConnection } from "../db/connection.js";
 import type { RpcAnnotation } from "./rpc-detector.js";
+import type { MessageAnnotation } from "./message-detector.js";
 import {
   batchSetRpcHandlerMeta,
   batchSetRpcCallerMeta,
   batchUpsertProtoUsageRelationships,
+  batchUpsertMessageUsageRelationships,
   resolveRpcEdges,
   clearRpcMetaForFiles,
 } from "../db/queries.js";
 
+export type ProtoUsageAnnotation = RpcAnnotation | MessageAnnotation;
+
+function isMessageAnnotation(a: ProtoUsageAnnotation): a is MessageAnnotation {
+  return "messageName" in a;
+}
+
 export async function linkRpcEdges(
   db: DbConnection,
-  annotations: RpcAnnotation[],
+  allAnnotations: ProtoUsageAnnotation[],
   touchedFilePaths: string[] = []
 ): Promise<number> {
   const session = db.session();
@@ -19,6 +27,21 @@ export async function linkRpcEdges(
       const clearQ = clearRpcMetaForFiles(touchedFilePaths);
       await session.run(clearQ.cypher, clearQ.params);
     }
+    if (allAnnotations.length === 0) return 0;
+
+    const messageAnnotations = allAnnotations.filter(isMessageAnnotation);
+    if (messageAnnotations.length > 0) {
+      const q = batchUpsertMessageUsageRelationships(messageAnnotations.map((m) => ({
+        functionName: m.functionName,
+        filePath: m.filePath,
+        role: m.role,
+        messageName: m.messageName,
+        packageName: m.packageName,
+      })));
+      await session.run(q.cypher, q.params);
+    }
+
+    const annotations = allAnnotations.filter((a): a is RpcAnnotation => !isMessageAnnotation(a));
     if (annotations.length === 0) return 0;
     const handlers = annotations.filter((a) => a.role === "handler");
     const callers = annotations.filter((a) => a.role === "caller");

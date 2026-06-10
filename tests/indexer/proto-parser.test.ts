@@ -131,6 +131,86 @@ describe("parseProtoSource", () => {
     expect(reg.getServiceMethods("EmptyService")).toEqual([]);
   });
 
+  it("registers top-level messages from a message-only proto", () => {
+    const source = `
+      syntax = "proto3";
+      package events.v1;
+
+      message UserCreated {
+        string id = 1;
+        string name = 2;
+      }
+
+      message UserDeleted {
+        string id = 1;
+      }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/events.proto", reg);
+
+    expect(reg.getAllServices()).toEqual([]);
+    const names = reg.getAllMessages().map((m) => m.messageName).sort();
+    expect(names).toEqual(["UserCreated", "UserDeleted"]);
+
+    const defs = reg.lookupMessage("UserCreated");
+    expect(defs).toHaveLength(1);
+    expect(defs[0].packageName).toBe("events.v1");
+    expect(defs[0].protoFile).toBe("/protos/events.proto");
+  });
+
+  it("registers messages alongside services", () => {
+    const source = `
+      syntax = "proto3";
+      package user.v1;
+
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+
+      message GetUserRequest { string id = 1; }
+      message GetUserResponse { string id = 1; string name = 2; }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/user.proto", reg);
+
+    expect(reg.lookup("UserService", "GetUser")).not.toBeNull();
+    expect(reg.lookupMessage("GetUserRequest")).toHaveLength(1);
+    expect(reg.lookupMessage("GetUserResponse")).toHaveLength(1);
+  });
+
+  it("registers nested messages and deduplicates re-registration", () => {
+    const source = `
+      syntax = "proto3";
+      package events.v1;
+
+      message Outer {
+        message Inner { string id = 1; }
+        Inner inner = 1;
+      }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/events.proto", reg);
+    parseProtoSource(source, "/protos/events.proto", reg);
+
+    const names = reg.getAllMessages().map((m) => m.messageName).sort();
+    expect(names).toEqual(["Inner", "Outer"]);
+    expect(reg.lookupMessage("Outer")).toHaveLength(1);
+  });
+
+  it("ignores message names mentioned only in comments", () => {
+    const source = `
+      syntax = "proto3";
+      package events.v1;
+
+      // message Phantom { string id = 1; }
+      message Real { string id = 1; }
+    `;
+    const reg = createProtoRegistry();
+    parseProtoSource(source, "/protos/events.proto", reg);
+
+    expect(reg.getAllMessages().map((m) => m.messageName)).toEqual(["Real"]);
+  });
+
   it("handles nested brace blocks inside service (e.g. inline message)", () => {
     const source = `
       syntax = "proto3";

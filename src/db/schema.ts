@@ -13,6 +13,9 @@ export async function setupSchema(db: DbConnection): Promise<void> {
     await session.run(
       "CREATE CONSTRAINT proto_method_key IF NOT EXISTS FOR (m:ProtoMethod) REQUIRE (m.serviceName, m.methodName) IS UNIQUE"
     );
+    await session.run(
+      "CREATE CONSTRAINT proto_message_key IF NOT EXISTS FOR (m:ProtoMessage) REQUIRE (m.messageName, m.packageName) IS UNIQUE"
+    );
 
     // Indexes for fast lookup
     await session.run(

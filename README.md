@@ -347,6 +347,11 @@ node bin/rho-graph.js visualize
 # Tests
 npm test
 
+# Integration tests run against a dedicated ephemeral Neo4j instance
+# (bolt on 7688, data in tmpfs) so they never touch your dev graph
+npm run db:test            # start the test instance once
+npm run test:integration   # full suite including integration tests
+
 # Type check only (no emit)
 npm run lint
 ```

@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package events.v1;
+
+option go_package = "example.com/backend/proto/events/v1;eventsv1";
+
+// Published to the Pub/Sub topic "user-created" whenever a user signs up.
+// Note: message-only proto — pub/sub event schemas have no service block.
+message UserCreated {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}

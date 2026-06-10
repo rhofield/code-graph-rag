@@ -1,7 +1,7 @@
 // tests/visualize/server.int.test.ts
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "node:path";
-import { createConnection } from "../../src/db/connection.js";
+import { createTestConnection, TEST_NEO4J_CONFIG } from "../helpers/test-db.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { indexRepository } from "../../src/indexer/index.js";
 import { DEFAULT_CONFIG } from "../../src/config.js";
@@ -21,11 +21,7 @@ describe.skipIf(!INTEGRATION)("visualize server endpoints", () => {
   let server: Server | undefined;
 
   beforeAll(async () => {
-    const db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    const db = createTestConnection();
     await setupSchema(db);
 
     // Index a fixture so the graph has known content
@@ -38,9 +34,7 @@ describe.skipIf(!INTEGRATION)("visualize server endpoints", () => {
 
     server = await startVisualizationServerForTest({
       neo4jConfig: {
-        uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-        username: process.env.NEO4J_USERNAME ?? "neo4j",
-        password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
+        ...TEST_NEO4J_CONFIG,
         managed: false,
       },
       port: PORT,

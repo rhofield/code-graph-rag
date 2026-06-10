@@ -66,6 +66,17 @@ describe("ProtoRegistry", () => {
     expect(results).toHaveLength(2);
   });
 
+  it("is idempotent: re-registering the same def does not duplicate method lookups", () => {
+    // A proto file can be parsed into the same registry more than once
+    // (workspace pre-scan + per-repo indexing). Duplicate methodIndex entries
+    // break callers that rely on lookupByMethod returning exactly one def.
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register(USER_GET);
+    expect(reg.lookupByMethod("GetUser")).toHaveLength(1);
+    expect(reg.lookupByMethod("getUser")).toHaveLength(1);
+  });
+
   it("lists all methods for a service", () => {
     const reg = createProtoRegistry();
     reg.register(USER_GET);

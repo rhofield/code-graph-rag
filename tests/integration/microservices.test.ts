@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import { mkdirSync, rmSync, existsSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createConnection } from "../../src/db/connection.js";
+import { createTestConnection } from "../helpers/test-db.js";
 import { setupSchema } from "../../src/db/schema.js";
 import { functionCallersQuery } from "../../src/db/queries.js";
 import { indexRepository, createProtoRegistry } from "../../src/indexer/index.js";
@@ -123,6 +124,7 @@ async function cleanupGraphRoot(db: ReturnType<typeof createConnection>, root: s
     await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root });
     await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root });
     await session.run("MATCH (m:ProtoMethod) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root });
+    await session.run("MATCH (m:ProtoMessage) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root });
   } finally {
     await session.close();
   }
@@ -162,11 +164,7 @@ describe.skipIf(!INTEGRATION)("microservice integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
   });
 
@@ -228,11 +226,7 @@ describe.skipIf(!INTEGRATION)("gRPC monorepo integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
   });
 
@@ -464,11 +458,7 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
     const session = db.session();
     try {
@@ -741,11 +731,7 @@ describe.skipIf(!INTEGRATION)("Apollo GraphQL to gRPC integration", () => {
   let tmpRoot: string;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
 
     tmpRoot = join(tmpdir(), `apollo-graphql-grpc-${Date.now()}`);
@@ -836,6 +822,7 @@ export class UserHandler implements UserServiceServer {
       await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root: tmpRoot });
       await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root: tmpRoot });
       await session.run("MATCH (m:ProtoMethod) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root: tmpRoot });
+      await session.run("MATCH (m:ProtoMessage) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root: tmpRoot });
     } finally {
       await session.close();
     }
@@ -1121,11 +1108,7 @@ describe.skipIf(!INTEGRATION)("pure-container discovery integration", () => {
   let tmpRoot: string;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
 
     // Build a pure-container: two existing fixture microservices copied into

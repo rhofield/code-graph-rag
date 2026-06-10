@@ -1,7 +1,7 @@
 import { relative } from "node:path";
 import type Parser from "web-tree-sitter";
 import type { BatchGraphWriter } from "./batch-writer.js";
-import type { RpcAnnotation } from "./rpc-detector.js";
+import type { ProtoUsageAnnotation } from "./rpc-linker.js";
 
 export class Semaphore {
   private queue: Array<() => void> = [];
@@ -41,7 +41,7 @@ export interface PipelineOptions {
   getMtimeFn: (filePath: string) => number;
   onProgress?: (current: number, total: number, file: string) => void;
   onFlushProgress?: (completed: number, total: number) => void;
-  rpcDetectFn?: (tree: Parser.Tree, language: string, source: string, filePath: string) => RpcAnnotation[];
+  rpcDetectFn?: (tree: Parser.Tree, language: string, source: string, filePath: string) => ProtoUsageAnnotation[];
 }
 
 export interface PipelineResult {
@@ -49,7 +49,7 @@ export interface PipelineResult {
   functionsFound: number;
   classesFound: number;
   errors: Array<{ file: string; error: string }>;
-  rpcAnnotations: RpcAnnotation[];
+  rpcAnnotations: ProtoUsageAnnotation[];
 }
 
 export async function runParallelPipeline(options: PipelineOptions): Promise<PipelineResult> {

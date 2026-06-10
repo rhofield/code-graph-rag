@@ -17,13 +17,17 @@ import {
   batchUpsertProtoDefs,
   loadAllProtoDefs,
   batchDeleteOrphanProtoMethods,
+  batchUpsertProtoMessages,
+  loadAllProtoMessages,
+  batchDeleteOrphanProtoMessages,
 } from "../db/queries.js";
 import { computeFileHash, getFileMtime, isFileStale, getChangedFilesSinceCommit, getCurrentCommitSha } from "./staleness.js";
 import { runParallelPipeline } from "./parallel-pipeline.js";
 import { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
 import { parseProtoFiles } from "./proto-parser.js";
-import { detectRpcPatterns, type RpcAnnotation } from "./rpc-detector.js";
-import { linkRpcEdges } from "./rpc-linker.js";
+import { detectRpcPatterns } from "./rpc-detector.js";
+import { detectMessagePatterns } from "./message-detector.js";
+import { linkRpcEdges, type ProtoUsageAnnotation } from "./rpc-linker.js";
 import { linkGraphQLResolverEdges } from "./graphql-linker.js";
 
 export { createProtoRegistry, type ProtoRegistry } from "./proto-registry.js";
@@ -40,11 +44,18 @@ async function persistProtoDefs(db: DbConnection, registry: ProtoRegistry): Prom
       protoFile: def.protoFile,
     }))
   );
-  if (items.length === 0) return;
+  const messageItems = registry.getAllMessages();
+  if (items.length === 0 && messageItems.length === 0) return;
   const session = db.session();
   try {
-    const q = batchUpsertProtoDefs(items);
-    await session.run(q.cypher, q.params);
+    if (items.length > 0) {
+      const q = batchUpsertProtoDefs(items);
+      await session.run(q.cypher, q.params);
+    }
+    if (messageItems.length > 0) {
+      const q = batchUpsertProtoMessages(messageItems);
+      await session.run(q.cypher, q.params);
+    }
   } finally {
     await session.close();
   }
@@ -70,6 +81,22 @@ async function hydrateProtoRegistry(db: DbConnection, registry: ProtoRegistry): 
         requestType: r.get("requestType"),
         responseType: r.get("responseType"),
         packageName: r.get("packageName") ?? "",
+        protoFile: r.get("protoFile") ?? "",
+      });
+    }
+
+    const seenMessages = new Set(
+      registry.getAllMessages().map((m) => `${m.packageName}::${m.messageName}`)
+    );
+    const msgQ = loadAllProtoMessages();
+    const msgResult = await session.run(msgQ.cypher, msgQ.params);
+    for (const r of msgResult.records) {
+      const packageName = r.get("packageName") ?? "";
+      const messageName = r.get("messageName");
+      if (seenMessages.has(`${packageName}::${messageName}`)) continue;
+      registry.registerMessage({
+        messageName,
+        packageName,
         protoFile: r.get("protoFile") ?? "",
       });
     }
@@ -252,12 +279,22 @@ export async function indexRepository(
         methodName: d.methodName,
       }))
     );
-    if (keep.length > 0) {
+    const keepMessages = registry.getAllMessages().map((m) => ({
+      messageName: m.messageName,
+      packageName: m.packageName,
+    }));
+    if (keep.length > 0 || keepMessages.length > 0) {
       const session = db.session();
       try {
         const prefix = absRoot.endsWith(sep) ? absRoot : absRoot + sep;
-        const q = batchDeleteOrphanProtoMethods(keep, prefix);
-        await session.run(q.cypher, q.params);
+        if (keep.length > 0) {
+          const q = batchDeleteOrphanProtoMethods(keep, prefix);
+          await session.run(q.cypher, q.params);
+        }
+        if (keepMessages.length > 0) {
+          const q = batchDeleteOrphanProtoMessages(keepMessages, prefix);
+          await session.run(q.cypher, q.params);
+        }
       } finally {
         await session.close();
       }
@@ -269,10 +306,16 @@ export async function indexRepository(
   // skip RPC detection whenever its .proto lives in a separate repo.
   await hydrateProtoRegistry(db, registry);
 
-  // Create RPC detect function if registry has services
-  const rpcDetectFn = registry.getAllServices().length > 0
-    ? (tree: any, language: string, source: string, filePath: string) =>
-        detectRpcPatterns(tree, language, source, filePath, registry)
+  // Create proto detect function if registry has services or messages.
+  // Services drive RPC caller/handler detection; bare messages drive
+  // producer/consumer detection for message-broker flows (e.g. Pub/Sub).
+  const hasServices = registry.getAllServices().length > 0;
+  const hasMessages = registry.getAllMessages().length > 0;
+  const rpcDetectFn = hasServices || hasMessages
+    ? (tree: any, language: string, source: string, filePath: string) => [
+        ...detectRpcPatterns(tree, language, source, filePath, registry),
+        ...detectMessagePatterns(tree, language, source, filePath, registry),
+      ]
     : undefined;
 
   // Build the full set of discovered file paths for import resolution
@@ -352,7 +395,7 @@ export async function indexRepository(
     errors: [],
   };
 
-  let allRpcAnnotations: RpcAnnotation[] = [];
+  let allRpcAnnotations: ProtoUsageAnnotation[] = [];
 
   // Snapshot of what discovery returned, for orphan cleanup later. We capture
   // this before any post-discovery filtering so the cleanup compares against

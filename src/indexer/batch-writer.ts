@@ -55,7 +55,7 @@ export class BatchGraphWriter {
     private readonly db: DbConnection,
     options: { batchSize?: number; filePathSet?: Set<string> } = {}
   ) {
-    this.batchSize = options.batchSize ?? 200;
+    this.batchSize = options.batchSize ?? 100;
     this.filePathSet = options.filePathSet ?? new Set();
   }
 

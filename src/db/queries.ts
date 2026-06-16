@@ -254,6 +254,45 @@ export function functionCallersQuery(data: {
                doc.name AS graphqlDocument,
                gqlRel.fieldName AS graphqlField,
                resolver.name AS graphqlResolver
+        UNION
+        // generated proto dispatcher target: collapse through its canonical proto method
+        WITH target
+        MATCH (target)-[dispatcherUse:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND dispatcherUse.role IN ["caller", "handler"]
+          AND resolverUse.role = "consumer"
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        // generated proto dispatcher target: collapse through the real handler it invokes
+        WITH target
+        MATCH (target)-[:CALLS|RPC_CALLS]->(handler:Function)
+        MATCH (handler)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND resolver <> handler
+          AND resolverUse.role = "consumer"
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
       }
       ${returnClause}
     `,

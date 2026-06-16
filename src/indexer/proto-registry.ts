@@ -72,6 +72,19 @@ export class ProtoRegistry {
     return methods ? [...methods.values()] : [];
   }
 
+  getServiceMethodsInPackage(packageName: string, serviceName: string): ProtoRpcDef[] {
+    return this.getServiceMethods(serviceName).filter((m) => m.packageName === packageName);
+  }
+
+  lookupByMessageTypeInPackage(messageType: string, packageName: string): ProtoRpcDef[] {
+    return this.getAllServices()
+      .flatMap((svc) => this.getServiceMethods(svc))
+      .filter((m) =>
+        m.packageName === packageName &&
+        (m.requestType === messageType || m.responseType === messageType)
+      );
+  }
+
   getAllServices(): string[] {
     return [...this.services.keys()];
   }

@@ -254,6 +254,66 @@ describe("RPC Detector — TypeScript", () => {
 
     expect(annotations.filter((a) => a.role === "consumer")).toEqual([]);
   });
+
+  it("uses Connect service imports to disambiguate generic client variables", async () => {
+    const ambiguousReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+      service AdminService {
+        rpc GetUser (AdminGetUserRequest) returns (AdminGetUserResponse);
+      }
+    `, "/protos/ambiguous-connect.proto", ambiguousReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-connect-ambiguous-client.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-connect-ambiguous-client.ts", ambiguousReg);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "caller")).toEqual([
+      {
+        functionName: "user",
+        filePath: "ts-connect-ambiguous-client.ts",
+        role: "caller",
+        serviceName: "UserService",
+        methodName: "GetUser",
+      },
+    ]);
+  });
+
+  it("uses generated package import paths to disambiguate duplicate proto message names", async () => {
+    const packageReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+    `, "/protos/user.proto", packageReg);
+    parseProtoSource(`
+      syntax = "proto3";
+      package admin.v1;
+      service AdminService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+    `, "/protos/admin.proto", packageReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-package-proto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-package-proto-consumer.ts", packageReg);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "consumer")).toEqual([
+      {
+        functionName: "user",
+        filePath: "ts-graphql-package-proto-consumer.ts",
+        role: "consumer",
+        serviceName: "UserService",
+        methodName: "GetUser",
+      },
+    ]);
+  });
 });
 
 describe("RPC Detector — Java", () => {

@@ -159,6 +159,17 @@ describe("query builders", () => {
     });
   });
 
+  it("functionCallersQuery traverses from generated proto dispatcher targets to GraphQL callers", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "_UserService_GetUser_Handler",
+      filePath: "/repo/gen/users_grpc.pb.go",
+    });
+
+    expect(cypher).toContain("dispatcherUse.role IN");
+    expect(cypher).toContain("USES_GRAPHQL_PROTO_DISPATCHER");
+    expect(cypher).toContain("generated proto dispatcher");
+  });
+
   it("functionCallersQuery can return only lean human-facing caller columns", () => {
     const { cypher, params } = functionCallersQuery({
       functionName: "GetUser",

@@ -93,4 +93,30 @@ describe("ProtoRegistry", () => {
     reg.register(AUTH_VALIDATE);
     expect(reg.getAllServices().sort()).toEqual(["AuthService", "UserService"]);
   });
+
+  it("looks up service methods by package and service name", () => {
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register(USER_CREATE);
+    reg.register(AUTH_VALIDATE);
+
+    expect(reg.getServiceMethodsInPackage("user.v1", "UserService").map((m) => m.methodName).sort())
+      .toEqual(["CreateUser", "GetUser"]);
+    expect(reg.getServiceMethodsInPackage("auth.v1", "UserService")).toEqual([]);
+  });
+
+  it("looks up RPC defs by generated message type and package", () => {
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register({
+      ...AUTH_VALIDATE,
+      methodName: "GetUser",
+      methodCamel: "getUser",
+      requestType: "GetUserRequest",
+      responseType: "GetUserResponse",
+    });
+
+    expect(reg.lookupByMessageTypeInPackage("GetUserResponse", "user.v1")).toEqual([USER_GET]);
+    expect(reg.lookupByMessageTypeInPackage("GetUserResponse", "auth.v1")).toHaveLength(1);
+  });
 });

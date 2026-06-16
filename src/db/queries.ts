@@ -183,6 +183,15 @@ export function functionCallersQuery(data: {
       CALL {
         WITH target
         MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(target)
+        WITH caller, r,
+             // Hide generated.pb.go / *_pb.ts bridge functions from normal caller results.
+             coalesce(caller.filePath, "") ENDS WITH ".pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc.pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.js" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.js" AS isGeneratedProtoCaller
+        WHERE NOT isGeneratedProtoCaller
         RETURN caller,
                type(r) AS callType,
                r.serviceName AS rpcService,
@@ -195,9 +204,27 @@ export function functionCallersQuery(data: {
                null AS graphqlResolver
         UNION
         WITH target
+        MATCH (target)-[targetUse:USES_PROTO]->(proto:ProtoMethod)
+        RETURN {
+                 name: proto.serviceName + "." + proto.methodName,
+                 filePath: proto.protoFile,
+                 signature: null,
+                 startLine: null
+               } AS caller,
+               "PROTO_CANONICAL" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               targetUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        WITH target
         MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
         WHERE caller <> target
-          AND peerUse.role = "consumer"
+          AND peerUse.role IN ["consumer", "caller"]
         RETURN caller,
                "USES_PROTO" AS callType,
                null AS rpcService,
@@ -241,7 +268,7 @@ export function functionCallersQuery(data: {
         WITH target
         MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
         WHERE resolver <> target
-          AND resolverUse.role = "consumer"
+          AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
         MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
         RETURN caller,
@@ -260,7 +287,7 @@ export function functionCallersQuery(data: {
         MATCH (target)-[dispatcherUse:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
         WHERE resolver <> target
           AND dispatcherUse.role IN ["caller", "handler"]
-          AND resolverUse.role = "consumer"
+          AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
         MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
         RETURN caller,
@@ -280,7 +307,7 @@ export function functionCallersQuery(data: {
         MATCH (handler)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
         WHERE resolver <> target
           AND resolver <> handler
-          AND resolverUse.role = "consumer"
+          AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
         MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
         RETURN caller,

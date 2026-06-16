@@ -151,8 +151,8 @@ describe("query builders", () => {
     expect(cypher).toContain("graphqlDocument");
     expect(cypher).toContain("graphqlResolver");
     expect(cypher).toContain("peerUse.role");
-    expect(cypher).toContain('peerUse.role = "consumer"');
-    expect(cypher).toContain('resolverUse.role = "consumer"');
+    expect(cypher).toContain('peerUse.role IN ["consumer", "caller"]');
+    expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
     expect(params).toEqual({
       functionName: "GetUser",
       filePath: "/repo/service/handler.go",
@@ -167,7 +167,32 @@ describe("query builders", () => {
 
     expect(cypher).toContain("dispatcherUse.role IN");
     expect(cypher).toContain("USES_GRAPHQL_PROTO_DISPATCHER");
+    expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
     expect(cypher).toContain("generated proto dispatcher");
+  });
+
+  it("functionCallersQuery filters generated protobuf callers from direct call results", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("isGeneratedProtoCaller");
+    expect(cypher).toContain("generated.pb.go");
+    expect(cypher).toContain('coalesce(caller.filePath, "") ENDS WITH ".pb.go"');
+    expect(cypher).toContain('coalesce(caller.filePath, "") ENDS WITH "_pb.ts"');
+    expect(cypher).toContain("NOT isGeneratedProtoCaller");
+  });
+
+  it("functionCallersQuery returns the canonical proto method as a bridge caller", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("PROTO_CANONICAL");
+    expect(cypher).toContain("proto.serviceName + \".\" + proto.methodName");
+    expect(cypher).toContain("proto.protoFile");
   });
 
   it("functionCallersQuery can return only lean human-facing caller columns", () => {

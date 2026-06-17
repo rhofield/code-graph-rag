@@ -184,6 +184,18 @@ describe("query builders", () => {
     expect(cypher).toContain("NOT isGeneratedProtoCaller");
   });
 
+  it("functionCallersQuery collapses generated proto callers of a real handler through the canonical proto method", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("generated proto caller bridge");
+    expect(cypher).toContain("generatedCaller");
+    expect(cypher).toContain("generatedUse.role IN");
+    expect(cypher).toContain("USES_GRAPHQL_PROTO_GENERATED_CALLER");
+  });
+
   it("functionCallersQuery returns the canonical proto method as a bridge caller", () => {
     const { cypher } = functionCallersQuery({
       functionName: "GetUser",

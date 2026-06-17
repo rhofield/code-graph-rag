@@ -77,6 +77,35 @@ describe("RPC Detector — Go", () => {
     expect(callers[0].serviceName).toBe("UserService");
     expect(callers[0].methodName).toBe("GetUser");
   });
+
+  it("annotates generated Go gRPC dispatchers with their canonical proto method", async () => {
+    const realisticReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package users.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserReply);
+      }
+    `, "/protos/users.proto", realisticReg);
+
+    const parsed = await parseFile(resolve("tests/fixtures/pubsub-realistic/workspace/backend-go/gen/users/v1/users_grpc.pb.go"));
+    const annotations = detectRpcPatterns(
+      parsed!.tree,
+      parsed!.language,
+      parsed!.source,
+      "users_grpc.pb.go",
+      realisticReg
+    );
+    parsed!.tree.delete();
+
+    expect(annotations).toContainEqual({
+      functionName: "_UserService_GetUser_Handler",
+      filePath: "users_grpc.pb.go",
+      role: "caller",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
 });
 
 describe("RPC Detector — Python", () => {

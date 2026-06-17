@@ -203,6 +203,27 @@ export function functionCallersQuery(data: {
                null AS graphqlField,
                null AS graphqlResolver
         UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> canonical proto
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)
+        WHERE generatedUse.role IN ["caller", "handler"]
+        RETURN {
+                 name: proto.serviceName + "." + proto.methodName,
+                 filePath: proto.protoFile,
+                 signature: null,
+                 startLine: null
+               } AS caller,
+               "PROTO_CANONICAL_GENERATED_CALLER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               generatedUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
         WITH target
         MATCH (target)-[targetUse:USES_PROTO]->(proto:ProtoMethod)
         RETURN {
@@ -227,6 +248,25 @@ export function functionCallersQuery(data: {
           AND peerUse.role IN ["consumer", "caller"]
         RETURN caller,
                "USES_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               peerUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> proto peers
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
+        WHERE caller <> target
+          AND caller <> generatedCaller
+          AND generatedUse.role IN ["caller", "handler"]
+          AND peerUse.role IN ["consumer", "caller"]
+        RETURN caller,
+               "USES_PROTO_GENERATED_CALLER" AS callType,
                null AS rpcService,
                null AS rpcMethod,
                proto.serviceName AS protoService,
@@ -261,6 +301,27 @@ export function functionCallersQuery(data: {
                null AS protoService,
                null AS protoMethod,
                null AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> proto resolver -> GraphQL caller
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND resolver <> generatedCaller
+          AND generatedUse.role IN ["caller", "handler"]
+          AND resolverUse.role IN ["consumer", "caller"]
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
                doc.name AS graphqlDocument,
                gqlRel.fieldName AS graphqlField,
                resolver.name AS graphqlResolver

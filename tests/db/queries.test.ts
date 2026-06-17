@@ -159,7 +159,7 @@ describe("query builders", () => {
     });
   });
 
-  it("functionCallersQuery traverses from generated proto dispatcher targets to GraphQL callers", () => {
+  it("functionCallersQuery traverses from generated proto dispatcher targets to GraphQL resolvers first", () => {
     const { cypher } = functionCallersQuery({
       functionName: "_UserService_GetUser_Handler",
       filePath: "/repo/gen/users_grpc.pb.go",
@@ -169,6 +169,8 @@ describe("query builders", () => {
     expect(cypher).toContain("USES_GRAPHQL_PROTO_DISPATCHER");
     expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
     expect(cypher).toContain("generated proto dispatcher");
+    expect(cypher).toContain('"USES_GRAPHQL_PROTO_DISPATCHER" AS callType');
+    expect(cypher).toContain("RETURN resolver AS caller");
   });
 
   it("functionCallersQuery filters generated protobuf callers from direct call results", () => {
@@ -194,6 +196,8 @@ describe("query builders", () => {
     expect(cypher).toContain("generatedCaller");
     expect(cypher).toContain("generatedUse.role IN");
     expect(cypher).toContain("USES_GRAPHQL_PROTO_GENERATED_CALLER");
+    expect(cypher).toContain('"USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType');
+    expect(cypher).toContain("RETURN resolver AS caller");
   });
 
   it("functionCallersQuery returns the canonical proto method as a bridge caller", () => {

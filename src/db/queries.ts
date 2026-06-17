@@ -178,8 +178,20 @@ export function functionCallersQuery(data: {
 
   return {
     cypher: `
-      MATCH (target:Function {name: $functionName})
-      WHERE $filePath IS NULL OR target.filePath = $filePath
+      MATCH (target)
+      WHERE (
+          target:Function
+          AND target.name = $functionName
+          AND ($filePath IS NULL OR target.filePath = $filePath)
+        ) OR (
+          target:ProtoMethod
+          AND $filePath IS NULL
+          AND (
+            target.serviceName + "." + target.methodName = $functionName OR
+            target.protoFile = $functionName OR
+            target.protoFile ENDS WITH "/" + $functionName
+          )
+        )
       CALL {
         WITH target
         MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(target)
@@ -199,6 +211,30 @@ export function functionCallersQuery(data: {
                null AS protoService,
                null AS protoMethod,
                null AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        // proto target: graph-layer functions that call or consume the canonical proto
+        WITH target
+        MATCH (caller:Function)-[protoUse:USES_PROTO]->(target)
+        WHERE target:ProtoMethod
+          AND protoUse.role IN ["consumer", "caller"]
+        WITH caller, protoUse, target AS proto,
+             coalesce(caller.filePath, "") ENDS WITH ".pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc.pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.js" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.js" AS isGeneratedProtoCaller
+        WHERE NOT isGeneratedProtoCaller
+        RETURN caller,
+               "USES_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               protoUse.role AS protoRole,
                null AS graphqlDocument,
                null AS graphqlField,
                null AS graphqlResolver

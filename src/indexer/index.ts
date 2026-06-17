@@ -491,6 +491,8 @@ export async function indexRepository(
     await batchWriter.flush();
   }
 
+  await batchWriter.flushCallRelationships();
+
   // Link RPC edges from annotations
   const erroredPaths = new Set(result.errors.map((e) => e.file));
   const touchedFilePaths = files.filter((f) => !erroredPaths.has(f));

@@ -10,7 +10,7 @@ const mockTx = {
   commit: vi.fn().mockResolvedValue(undefined),
   rollback: vi.fn().mockResolvedValue(undefined),
 };
-const mockSession = { beginTransaction: () => mockTx, close: mockClose };
+const mockSession = { beginTransaction: () => mockTx, run: mockRun, close: mockClose };
 const mockDb = {
   driver: {},
   session: () => mockSession,
@@ -71,6 +71,48 @@ describe("BatchGraphWriter", () => {
     writer.add(makeEntities("/p/b.ts"), makeMeta("/p/b.ts"));
     await writer.waitForPendingFlush();
     expect(mockRun).toHaveBeenCalled();
+  });
+
+  it("defers CALLS relationships until after all function node batches are stable", async () => {
+    const writer = new BatchGraphWriter(mockDb as any, { batchSize: 1 });
+    writer.add(makeEntities("/p/caller.ts"), makeMeta("/p/caller.ts"));
+    await writer.waitForPendingFlush();
+
+    const callsBeforeCalleeFlush = mockRun.mock.calls.filter(
+      (c: any[]) => typeof c[0] === "string" && c[0].includes("MERGE (caller)-[:CALLS]->(callee)")
+    );
+    expect(callsBeforeCalleeFlush).toHaveLength(0);
+
+    writer.add(
+      {
+        ...makeEntities("/p/callee.ts"),
+        functions: [
+          {
+            name: "baz",
+            filePath: "/p/callee.ts",
+            startLine: 1,
+            endLine: 3,
+            signature: "fn baz()",
+            docstring: null,
+            snippet: "fn baz() {}",
+            className: null,
+          },
+        ],
+        calls: [],
+      },
+      makeMeta("/p/callee.ts")
+    );
+    await writer.flush();
+    await writer.flushCallRelationships();
+
+    const cyphers = mockRun.mock.calls.map((c: any[]) => c[0] as string);
+    const callIndex = cyphers.findIndex((c) => c.includes("MERGE (caller)-[:CALLS]->(callee)"));
+    const lastDeleteIndex = cyphers.reduce(
+      (last, c, i) => c.includes("DETACH DELETE method, child") ? i : last,
+      -1
+    );
+
+    expect(callIndex).toBeGreaterThan(lastDeleteIndex);
   });
 
   it("skips entities with empty names (pre-validation)", async () => {

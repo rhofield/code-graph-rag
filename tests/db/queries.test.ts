@@ -211,6 +211,24 @@ describe("query builders", () => {
     expect(cypher).toContain("proto.protoFile");
   });
 
+  it("functionCallersQuery can target a canonical proto method and return graph-layer proto users", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "UserService.GetUser",
+    });
+
+    expect(cypher).toContain("target:ProtoMethod");
+    expect(cypher).toContain('target.serviceName + "." + target.methodName = $functionName');
+    expect(cypher).toContain("target.protoFile = $functionName");
+    expect(cypher).toContain("proto target: graph-layer functions that call or consume the canonical proto");
+    expect(cypher).toContain("MATCH (caller:Function)-[protoUse:USES_PROTO]->(target)");
+    expect(cypher).toContain('protoUse.role IN ["consumer", "caller"]');
+    expect(cypher).toContain("NOT isGeneratedProtoCaller");
+    expect(params).toEqual({
+      functionName: "UserService.GetUser",
+      filePath: null,
+    });
+  });
+
   it("functionCallersQuery can return only lean human-facing caller columns", () => {
     const { cypher, params } = functionCallersQuery({
       functionName: "GetUser",

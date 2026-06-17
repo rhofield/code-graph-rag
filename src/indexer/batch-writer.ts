@@ -26,7 +26,6 @@ interface FlushSnapshot {
   fileMetas: FileMetadata[];
   functions: ExtractedFunction[];
   classes: ExtractedClass[];
-  calls: ExtractedCall[];
   imports: Array<{ sourceFilePath: string; targetFilePath: string }>;
   graphqlDocuments: ExtractedGraphQLDocument[];
   graphqlUsages: ExtractedGraphQLUsage[];
@@ -37,7 +36,7 @@ export class BatchGraphWriter {
   private fileMetas: FileMetadata[] = [];
   private allFunctions: ExtractedFunction[] = [];
   private allClasses: ExtractedClass[] = [];
-  private allCalls: ExtractedCall[] = [];
+  private deferredCalls: ExtractedCall[] = [];
   private allImports: Array<{ sourceFilePath: string; targetFilePath: string }> = [];
   private allGraphQLDocuments: ExtractedGraphQLDocument[] = [];
   private allGraphQLUsages: ExtractedGraphQLUsage[] = [];
@@ -75,7 +74,7 @@ export class BatchGraphWriter {
 
     this.allFunctions.push(...validFunctions);
     this.allClasses.push(...validClasses);
-    this.allCalls.push(...entities.calls);
+    this.deferredCalls.push(...entities.calls);
     this.allGraphQLDocuments.push(...(entities.graphqlDocuments ?? []));
     this.allGraphQLUsages.push(...(entities.graphqlUsages ?? []));
     this.allGraphQLFragmentSpreads.push(...(entities.graphqlFragmentSpreads ?? []));
@@ -99,7 +98,6 @@ export class BatchGraphWriter {
       fileMetas: this.fileMetas,
       functions: this.allFunctions,
       classes: this.allClasses,
-      calls: this.allCalls,
       imports: this.allImports,
       graphqlDocuments: this.allGraphQLDocuments,
       graphqlUsages: this.allGraphQLUsages,
@@ -108,7 +106,6 @@ export class BatchGraphWriter {
     this.fileMetas = [];
     this.allFunctions = [];
     this.allClasses = [];
-    this.allCalls = [];
     this.allImports = [];
     this.allGraphQLDocuments = [];
     this.allGraphQLUsages = [];
@@ -151,7 +148,6 @@ export class BatchGraphWriter {
       fileMetas,
       functions: allFunctions,
       classes: allClasses,
-      calls: allCalls,
       imports: allImports,
       graphqlDocuments: allGraphQLDocuments,
       graphqlUsages: allGraphQLUsages,
@@ -220,11 +216,6 @@ export class BatchGraphWriter {
         await tx.run(methodsQ.cypher, methodsQ.params);
       }
 
-      if (allCalls.length > 0) {
-        const callsQ = batchUpsertCallRelationships(allCalls);
-        await tx.run(callsQ.cypher, callsQ.params);
-      }
-
       if (allGraphQLDocuments.length > 0) {
         const docsQ = batchUpsertGraphQLDocuments(allGraphQLDocuments);
         await tx.run(docsQ.cypher, docsQ.params);
@@ -277,6 +268,20 @@ export class BatchGraphWriter {
       const err = this._flushError;
       this._flushError = null;
       throw err;
+    }
+  }
+
+  async flushCallRelationships(): Promise<void> {
+    await this.flush();
+    if (this.deferredCalls.length === 0) return;
+
+    const session = this.db.session();
+    try {
+      const q = batchUpsertCallRelationships(this.deferredCalls);
+      await session.run(q.cypher, q.params);
+      this.deferredCalls = [];
+    } finally {
+      await session.close();
     }
   }
 

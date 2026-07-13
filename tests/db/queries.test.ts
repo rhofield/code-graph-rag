@@ -170,7 +170,8 @@ describe("query builders", () => {
     expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
     expect(cypher).toContain("generated proto dispatcher");
     expect(cypher).toContain('"USES_GRAPHQL_PROTO_DISPATCHER" AS callType');
-    expect(cypher).toContain("RETURN resolver AS caller");
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("RETURN caller,");
   });
 
   it("functionCallersQuery filters generated protobuf callers from direct call results", () => {
@@ -197,7 +198,20 @@ describe("query builders", () => {
     expect(cypher).toContain("generatedUse.role IN");
     expect(cypher).toContain("USES_GRAPHQL_PROTO_GENERATED_CALLER");
     expect(cypher).toContain('"USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType');
-    expect(cypher).toContain("RETURN resolver AS caller");
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("RETURN caller,");
+  });
+
+  it("functionCallersQuery returns frontend GraphQL users instead of resolvers as callers", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "getUser",
+      filePath: "/repo/user-service/src/handler.ts",
+    });
+
+    expect(cypher).toContain('"USES_GRAPHQL_RESOLVER" AS callType');
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("target.name AS graphqlResolver");
+    expect(cypher).not.toContain("RETURN resolver AS caller");
   });
 
   it("functionCallersQuery returns the canonical proto method as a bridge caller", () => {

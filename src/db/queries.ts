@@ -329,7 +329,8 @@ export function functionCallersQuery(data: {
         WITH target
         MATCH (resolver:Function)-[:CALLS|RPC_CALLS]->(target)
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
-        RETURN resolver AS caller,
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
                "USES_GRAPHQL_RESOLVER" AS callType,
                null AS rpcService,
                null AS rpcMethod,
@@ -349,7 +350,8 @@ export function functionCallersQuery(data: {
           AND generatedUse.role IN ["caller", "handler"]
           AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
-        RETURN resolver AS caller,
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
                "USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType,
                null AS rpcService,
                null AS rpcMethod,
@@ -365,7 +367,8 @@ export function functionCallersQuery(data: {
         WHERE resolver <> target
           AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
-        RETURN resolver AS caller,
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
                "USES_GRAPHQL_PROTO" AS callType,
                null AS rpcService,
                null AS rpcMethod,
@@ -383,7 +386,8 @@ export function functionCallersQuery(data: {
           AND dispatcherUse.role IN ["caller", "handler"]
           AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
-        RETURN resolver AS caller,
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
                "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
                null AS rpcService,
                null AS rpcMethod,
@@ -402,7 +406,8 @@ export function functionCallersQuery(data: {
           AND resolver <> handler
           AND resolverUse.role IN ["consumer", "caller"]
         MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
-        RETURN resolver AS caller,
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
                "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
                null AS rpcService,
                null AS rpcMethod,

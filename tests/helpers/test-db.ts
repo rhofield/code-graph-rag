@@ -5,9 +5,9 @@ import { createConnection } from "../../src/db/connection.js";
 // destroy fixture data freely; pointing them at the dev graph causes both
 // pollution and false failures from name collisions with indexed repos.
 export const TEST_NEO4J_CONFIG = {
-  uri: process.env.NEO4J_TEST_URI ?? "bolt://localhost:7688",
-  username: process.env.NEO4J_TEST_USERNAME ?? "neo4j",
-  password: process.env.NEO4J_TEST_PASSWORD ?? "code-graph-rag",
+  uri: process.env.NEO4J_TEST_URI ?? process.env.NEO4J_URI ?? "bolt://localhost:7688",
+  username: process.env.NEO4J_TEST_USERNAME ?? process.env.NEO4J_USERNAME ?? "neo4j",
+  password: process.env.NEO4J_TEST_PASSWORD ?? process.env.NEO4J_PASSWORD ?? "code-graph-rag",
 };
 
 export function createTestConnection(): ReturnType<typeof createConnection> {

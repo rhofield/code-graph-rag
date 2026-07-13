@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { loadConfig } from "../../config.js";
 import { createConnection, type DbConnection } from "../../db/connection.js";
+import { functionCallersQuery } from "../../db/queries.js";
 
 export function registerQueryCommand(program: Command): void {
   program
@@ -14,6 +15,7 @@ export function registerQueryCommand(program: Command): void {
     .option("--callers <functionName>", "Find all callers of a function")
     .option("--dependencies <filePath>", "Find dependencies of a file")
     .option("--structure", "Show high-level repo structure")
+    .option("-v, --verbose", "Show full query result values for agents")
     .action(async (cypher, opts) => {
       const repoPath = resolve(".");
       const config = loadConfig(repoPath);
@@ -28,8 +30,11 @@ export function registerQueryCommand(program: Command): void {
       }
 
       if (opts.callers) {
-        cypher =
-          "MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(callee:Function {name: $name}) RETURN caller.name AS caller, caller.filePath AS file, caller.startLine AS line, type(r) as callType, r.serviceName as rpcService, r.methodName as rpcMethod";
+        const q = functionCallersQuery({
+          functionName: opts.callers,
+          verbose: Boolean(opts.verbose),
+        });
+        cypher = q.cypher;
       } else if (opts.dependencies) {
         cypher =
           "MATCH (f:File)-[:IMPORTS]->(dep:File) WHERE f.relativePath = $path OR f.path ENDS WITH $path RETURN dep.relativePath AS dependency";
@@ -39,10 +44,18 @@ export function registerQueryCommand(program: Command): void {
       }
 
       if (cypher) {
-        const params: Record<string, string> = {};
-        if (opts.callers) params.name = opts.callers;
+        const params: Record<string, unknown> = {};
+        if (opts.callers) {
+          Object.assign(
+            params,
+            functionCallersQuery({
+              functionName: opts.callers,
+              verbose: Boolean(opts.verbose),
+            }).params
+          );
+        }
         if (opts.dependencies) params.path = opts.dependencies;
-        await runQuery(db, cypher, params);
+        await runQuery(db, cypher, params, Boolean(opts.verbose));
         await db.close();
         return;
       }
@@ -64,25 +77,118 @@ export function registerQueryCommand(program: Command): void {
           return;
         }
         if (trimmed) {
-          await runQuery(db, trimmed, {});
+          await runQuery(db, trimmed, {}, Boolean(opts.verbose));
         }
         rl.prompt();
       });
     });
 }
 
-function formatValue(v: unknown): string {
+type Neo4jNodeLike = {
+  labels: string[];
+  properties: Record<string, unknown>;
+};
+
+type Neo4jRelationshipLike = {
+  type: string;
+  properties: Record<string, unknown>;
+};
+
+function formatVerboseValue(v: unknown): string {
   if (v == null) return "null";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function isNeo4jNodeLike(v: unknown): v is Neo4jNodeLike {
+  return (
+    isRecord(v) &&
+    Array.isArray(v.labels) &&
+    isRecord(v.properties)
+  );
+}
+
+function isNeo4jRelationshipLike(v: unknown): v is Neo4jRelationshipLike {
+  return (
+    isRecord(v) &&
+    typeof v.type === "string" &&
+    isRecord(v.properties)
+  );
+}
+
+function firstString(
+  properties: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = properties[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return null;
+}
+
+function formatLine(properties: Record<string, unknown>): string {
+  const line = properties.startLine;
+  return typeof line === "number" ? `:${line}` : "";
+}
+
+function summarizeNode(node: Neo4jNodeLike): string {
+  const label = node.labels.join(":") || "Node";
+  const properties = node.properties;
+  const identifier =
+    typeof properties.serviceName === "string" &&
+    typeof properties.methodName === "string"
+      ? `${properties.serviceName}.${properties.methodName}`
+      : firstString(properties, [
+          "name",
+          "relativePath",
+          "path",
+          "filePath",
+          "protoFile",
+          "methodName",
+          "serviceName",
+        ]);
+  const location = firstString(properties, ["relativePath", "filePath", "path"]);
+
+  if (identifier && location && identifier !== location) {
+    return `${label} ${identifier} (${location}${formatLine(properties)})`;
+  }
+  if (identifier) return `${label} ${identifier}`;
+  if (location) return `${label} ${location}${formatLine(properties)}`;
+  return label;
+}
+
+function summarizeRelationship(relationship: Neo4jRelationshipLike): string {
+  const role = firstString(relationship.properties, ["role"]);
+  return role ? `${relationship.type} (${role})` : relationship.type;
+}
+
+export function formatQueryValue(v: unknown, verbose: boolean): string {
+  if (verbose) return formatVerboseValue(v);
+  if (v == null || typeof v !== "object") return formatVerboseValue(v);
+  if (Array.isArray(v)) {
+    return `[${v.map((item) => formatQueryValue(item, false)).join(", ")}]`;
+  }
+  if (isNeo4jNodeLike(v)) return summarizeNode(v);
+  if (isNeo4jRelationshipLike(v)) return summarizeRelationship(v);
+  return formatVerboseValue(v);
 }
 
 function terminalWidth(): number {
   return process.stdout.columns ?? 120;
 }
 
-function printTable(keys: string[], rows: string[][]): void {
-  const maxTotal = terminalWidth() - (keys.length - 1) * 3 - 4;
+export function formatTable(
+  keys: string[],
+  rows: string[][],
+  width = terminalWidth()
+): string {
+  const maxTotal = width - (keys.length - 1) * 3 - 4;
+  const protectedColumns = new Set(["file"]);
   const colWidths = keys.map((k, i) => {
     let max = k.length;
     for (const row of rows) {
@@ -95,21 +201,26 @@ function printTable(keys: string[], rows: string[][]): void {
   if (totalNeeded > maxTotal) {
     const fair = Math.floor(maxTotal / keys.length);
     const narrow: number[] = [];
-    let wideTotal = 0;
     let wideCount = 0;
     for (let i = 0; i < colWidths.length; i++) {
+      if (protectedColumns.has(keys[i])) {
+        continue;
+      }
       if (colWidths[i] <= fair) {
         narrow.push(i);
       } else {
-        wideTotal += colWidths[i];
         wideCount++;
       }
     }
-    const narrowUsed = narrow.reduce((s, i) => s + colWidths[i], 0);
-    const remaining = maxTotal - narrowUsed;
+    const fixedUsed = keys.reduce(
+      (sum, key, i) =>
+        protectedColumns.has(key) || narrow.includes(i) ? sum + colWidths[i] : sum,
+      0
+    );
+    const remaining = maxTotal - fixedUsed;
     const perWide = wideCount > 0 ? Math.floor(remaining / wideCount) : fair;
     for (let i = 0; i < colWidths.length; i++) {
-      if (colWidths[i] > fair) {
+      if (!protectedColumns.has(keys[i]) && colWidths[i] > fair) {
         colWidths[i] = Math.max(perWide, 8);
       }
     }
@@ -118,20 +229,26 @@ function printTable(keys: string[], rows: string[][]): void {
   const pad = (s: string, w: number) =>
     s.length <= w ? s + " ".repeat(w - s.length) : s.slice(0, w - 1) + "…";
 
-  const header = keys.map((k, i) => pad(k, colWidths[i])).join(" │ ");
-  const sep = colWidths.map((w) => "─".repeat(w)).join("─┼─");
-  console.log(header);
-  console.log(sep);
+  const lines: string[] = [];
+  lines.push(keys.map((k, i) => pad(k, colWidths[i])).join(" │ "));
+  lines.push(colWidths.map((w) => "─".repeat(w)).join("─┼─"));
   for (const row of rows) {
-    console.log(row.map((v, i) => pad(v, colWidths[i])).join(" │ "));
+    lines.push(row.map((v, i) => pad(v, colWidths[i])).join(" │ "));
   }
-  console.log(`\n${rows.length} row(s)`);
+  lines.push("");
+  lines.push(`${rows.length} row(s)`);
+  return lines.join("\n");
+}
+
+function printTable(keys: string[], rows: string[][]): void {
+  console.log(formatTable(keys, rows));
 }
 
 async function runQuery(
   db: DbConnection,
   cypher: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  verbose: boolean
 ): Promise<void> {
   const session = db.session();
   try {
@@ -143,7 +260,7 @@ async function runQuery(
 
     const keys = result.records[0].keys as string[];
     const rows = result.records.map((record) =>
-      keys.map((k) => formatValue(record.get(k)))
+      keys.map((k) => formatQueryValue(record.get(k), verbose))
     );
     printTable(keys, rows);
   } catch (error) {

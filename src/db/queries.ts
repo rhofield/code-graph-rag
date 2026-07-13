@@ -144,6 +144,289 @@ export function upsertImportSymbol(data: {
   };
 }
 
+export function functionCallersQuery(data: {
+  functionName: string;
+  filePath?: string | null;
+  verbose?: boolean;
+}): CypherQuery {
+  const returnClause =
+    data.verbose === false
+      ? `
+      RETURN DISTINCT caller.name AS caller,
+             caller.filePath AS file
+      ORDER BY file, caller
+    `
+      : `
+      RETURN DISTINCT caller.name AS callerName,
+             caller.name AS caller,
+             caller.filePath AS callerFilePath,
+             caller.filePath AS file,
+             caller.signature AS signature,
+             caller.startLine AS startLine,
+             caller.startLine AS line,
+             callType,
+             rpcService,
+             rpcMethod,
+             protoService,
+             protoMethod,
+             protoRole,
+             graphqlDocument,
+             graphqlField,
+             graphqlResolver
+      ORDER BY callerFilePath, callerName, callType
+    `;
+
+  return {
+    cypher: `
+      MATCH (target)
+      WHERE (
+          target:Function
+          AND target.name = $functionName
+          AND ($filePath IS NULL OR target.filePath = $filePath)
+        ) OR (
+          target:ProtoMethod
+          AND $filePath IS NULL
+          AND (
+            target.serviceName + "." + target.methodName = $functionName OR
+            target.protoFile = $functionName OR
+            target.protoFile ENDS WITH "/" + $functionName
+          )
+        )
+      CALL {
+        WITH target
+        MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(target)
+        WITH caller, r,
+             // Hide generated.pb.go / *_pb.ts bridge functions from normal caller results.
+             coalesce(caller.filePath, "") ENDS WITH ".pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc.pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.js" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.js" AS isGeneratedProtoCaller
+        WHERE NOT isGeneratedProtoCaller
+        RETURN caller,
+               type(r) AS callType,
+               r.serviceName AS rpcService,
+               r.methodName AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        // proto target: graph-layer functions that call or consume the canonical proto
+        WITH target
+        MATCH (caller:Function)-[protoUse:USES_PROTO]->(target)
+        WHERE target:ProtoMethod
+          AND protoUse.role IN ["consumer", "caller"]
+        WITH caller, protoUse, target AS proto,
+             coalesce(caller.filePath, "") ENDS WITH ".pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc.pb.go" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_pb.js" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.ts" OR
+             coalesce(caller.filePath, "") ENDS WITH "_grpc_pb.js" AS isGeneratedProtoCaller
+        WHERE NOT isGeneratedProtoCaller
+        RETURN caller,
+               "USES_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               protoUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> canonical proto
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)
+        WHERE generatedUse.role IN ["caller", "handler"]
+        RETURN {
+                 name: proto.serviceName + "." + proto.methodName,
+                 filePath: proto.protoFile,
+                 signature: null,
+                 startLine: null
+               } AS caller,
+               "PROTO_CANONICAL_GENERATED_CALLER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               generatedUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (target)-[targetUse:USES_PROTO]->(proto:ProtoMethod)
+        RETURN {
+                 name: proto.serviceName + "." + proto.methodName,
+                 filePath: proto.protoFile,
+                 signature: null,
+                 startLine: null
+               } AS caller,
+               "PROTO_CANONICAL" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               targetUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
+        WHERE caller <> target
+          AND peerUse.role IN ["consumer", "caller"]
+        RETURN caller,
+               "USES_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               peerUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> proto peers
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)<-[peerUse:USES_PROTO]-(caller:Function)
+        WHERE caller <> target
+          AND caller <> generatedCaller
+          AND generatedUse.role IN ["caller", "handler"]
+          AND peerUse.role IN ["consumer", "caller"]
+        RETURN caller,
+               "USES_PROTO_GENERATED_CALLER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               peerUse.role AS protoRole,
+               null AS graphqlDocument,
+               null AS graphqlField,
+               null AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(target)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               target.name AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (resolver:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_RESOLVER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               null AS protoService,
+               null AS protoMethod,
+               null AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        // generated proto caller bridge: real handler target <- generated dispatcher -> proto resolver -> GraphQL caller
+        WITH target
+        MATCH (generatedCaller:Function)-[:CALLS|RPC_CALLS]->(target)
+        MATCH (generatedCaller)-[generatedUse:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND resolver <> generatedCaller
+          AND generatedUse.role IN ["caller", "handler"]
+          AND resolverUse.role IN ["consumer", "caller"]
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        WITH target
+        MATCH (target)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND resolverUse.role IN ["consumer", "caller"]
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        // generated proto dispatcher target: collapse through its canonical proto method
+        WITH target
+        MATCH (target)-[dispatcherUse:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND dispatcherUse.role IN ["caller", "handler"]
+          AND resolverUse.role IN ["consumer", "caller"]
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+        UNION
+        // generated proto dispatcher target: collapse through the real handler it invokes
+        WITH target
+        MATCH (target)-[:CALLS|RPC_CALLS]->(handler:Function)
+        MATCH (handler)-[:USES_PROTO]->(proto:ProtoMethod)<-[resolverUse:USES_PROTO]-(resolver:Function)
+        WHERE resolver <> target
+          AND resolver <> handler
+          AND resolverUse.role IN ["consumer", "caller"]
+        MATCH (doc:GraphQLDocument)-[gqlRel:USES_GRAPHQL_RESOLVER]->(resolver)
+        MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)
+        RETURN caller,
+               "USES_GRAPHQL_PROTO_DISPATCHER" AS callType,
+               null AS rpcService,
+               null AS rpcMethod,
+               proto.serviceName AS protoService,
+               proto.methodName AS protoMethod,
+               resolverUse.role AS protoRole,
+               doc.name AS graphqlDocument,
+               gqlRel.fieldName AS graphqlField,
+               resolver.name AS graphqlResolver
+      }
+      ${returnClause}
+    `,
+    params: {
+      functionName: data.functionName,
+      filePath: data.filePath ?? null,
+    },
+  };
+}
+
 export function batchUpsertFiles(items: Array<{
   path: string; relativePath: string; repoPath: string;
   language: string; hash: string; lastModified: number;
@@ -265,6 +548,157 @@ export function batchUpsertCallRelationships(items: Array<{
   };
 }
 
+export function batchUpsertProtoUsageRelationships(items: Array<{
+  functionName: string;
+  filePath: string;
+  serviceName: string;
+  methodName: string;
+  role: "caller" | "handler" | "consumer";
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      MATCH (m:ProtoMethod {serviceName: item.serviceName, methodName: item.methodName})
+      MERGE (fn)-[r:USES_PROTO {role: item.role}]->(m)
+      SET r.serviceName = item.serviceName,
+          r.methodName = item.methodName
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLDocuments(items: Array<{
+  name: string;
+  kind: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  signature: string;
+  snippet: string;
+  variableName: string | null;
+  resolverFieldNames?: string[];
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (doc:GraphQLDocument {name: item.name, kind: item.kind, filePath: item.filePath})
+      SET doc.startLine = item.startLine,
+          doc.endLine = item.endLine,
+          doc.signature = item.signature,
+          doc.snippet = item.snippet,
+          doc.variableName = item.variableName,
+          doc.resolverFieldNames = coalesce(item.resolverFieldNames, [])
+      WITH item, doc
+      OPTIONAL MATCH (f:File {path: item.filePath})
+      FOREACH (_ IN CASE WHEN f IS NULL THEN [] ELSE [1] END |
+        MERGE (f)-[:CONTAINS]->(doc)
+      )
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLResolverLinks(items: Array<{
+  name: string;
+  kind: string;
+  filePath: string;
+  resolverFieldNames?: string[];
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (doc:GraphQLDocument {name: item.name, kind: item.kind, filePath: item.filePath})
+      WITH item, doc, coalesce(item.resolverFieldNames, []) AS resolverFieldNames
+      UNWIND resolverFieldNames AS fieldName
+      MATCH (resolver:Function {name: fieldName})
+      MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+      SET r.fieldName = fieldName
+    `,
+    params: { items },
+  };
+}
+
+export function clearGraphQLResolverLinks(filePaths: string[] = []): CypherQuery {
+  return {
+    cypher: `
+      MATCH (doc:GraphQLDocument)-[r:USES_GRAPHQL_RESOLVER]->()
+      WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
+      DELETE r
+    `,
+    params: { filePaths },
+  };
+}
+
+export function resolveGraphQLResolverLinks(filePaths: string[] = []): CypherQuery {
+  // Two scopes, deduplicated by MERGE:
+  // 1. doc-side — documents in the touched files link to any matching resolver
+  // 2. resolver-side — functions in the touched files link back from any
+  //    document whose fields reference them. Without this, re-indexing only
+  //    the resolver repo (e.g. after a resolver is renamed to match a new
+  //    operation field) never relinks documents whose own files were untouched.
+  return {
+    cypher: `
+      CALL {
+        MATCH (doc:GraphQLDocument)
+        WHERE size($filePaths) = 0 OR doc.filePath IN $filePaths
+        WITH doc, coalesce(doc.resolverFieldNames, []) AS resolverFieldNames
+        UNWIND resolverFieldNames AS fieldName
+        MATCH (resolver:Function {name: fieldName})
+        MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+        SET r.fieldName = fieldName
+        RETURN count(r) AS created
+        UNION ALL
+        MATCH (resolver:Function)
+        WHERE size($filePaths) > 0 AND resolver.filePath IN $filePaths
+        MATCH (doc:GraphQLDocument)
+        WHERE resolver.name IN coalesce(doc.resolverFieldNames, [])
+        MERGE (doc)-[r:USES_GRAPHQL_RESOLVER]->(resolver)
+        SET r.fieldName = resolver.name
+        RETURN count(r) AS created
+      }
+      RETURN sum(created) AS relationshipsCreated
+    `,
+    params: { filePaths },
+  };
+}
+
+export function batchUpsertGraphQLUsages(items: Array<{
+  sourceName: string;
+  sourceFilePath: string;
+  documentName: string;
+  documentFilePath: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (source:Function {name: item.sourceName, filePath: item.sourceFilePath})
+      MATCH (doc:GraphQLDocument {name: item.documentName})
+      WHERE item.documentFilePath IS NULL OR doc.filePath = item.documentFilePath
+      MERGE (source)-[:USES_GRAPHQL]->(doc)
+    `,
+    params: { items },
+  };
+}
+
+export function batchUpsertGraphQLFragmentSpreads(items: Array<{
+  sourceDocumentName: string;
+  sourceDocumentFilePath: string;
+  targetFragmentName: string;
+  targetFragmentFilePath: string | null;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (source:GraphQLDocument {name: item.sourceDocumentName, filePath: item.sourceDocumentFilePath})
+      MATCH (target:GraphQLDocument {name: item.targetFragmentName, kind: "fragment"})
+      WHERE item.targetFragmentFilePath IS NULL OR target.filePath = item.targetFragmentFilePath
+      MERGE (source)-[:USES_FRAGMENT]->(target)
+    `,
+    params: { items },
+  };
+}
+
 export function upsertRepositoryWithCommit(data: {
   path: string;
   name: string;
@@ -356,7 +790,8 @@ export function deleteRepositoryAndFiles(data: { repoPath: string }): CypherQuer
       OPTIONAL MATCH (f)-[:CONTAINS]->(child)
       OPTIONAL MATCH (child)-[:HAS_METHOD]->(method)
       OPTIONAL MATCH (pm:ProtoMethod) WHERE pm.protoFile STARTS WITH $repoPathWithSep
-      DETACH DELETE method, child, f, pm, r
+      OPTIONAL MATCH (pmsg:ProtoMessage) WHERE pmsg.protoFile STARTS WITH $repoPathWithSep
+      DETACH DELETE method, child, f, pm, pmsg, r
     `,
     params: { repoPath: data.repoPath, repoPathWithSep },
   };
@@ -403,7 +838,8 @@ export function clearRpcMetaForFiles(filePaths: string[]): CypherQuery {
       MATCH (fn:Function {filePath: fp})
       OPTIONAL MATCH (fn)-[out:RPC_CALLS]->()
       OPTIONAL MATCH ()-[inc:RPC_CALLS]->(fn)
-      DELETE out, inc
+      OPTIONAL MATCH (fn)-[protoUse:USES_PROTO]->()
+      DELETE out, inc, protoUse
       REMOVE fn.rpcCallerServices, fn.rpcCallerMethods,
              fn.rpcHandlerService, fn.rpcHandlerMethod
     `,
@@ -419,6 +855,7 @@ export function batchUpsertProtoDefs(items: Array<{
   responseType: string;
   packageName: string;
   protoFile: string;
+  goPackage?: string;
 }>): CypherQuery {
   return {
     cypher: `
@@ -428,9 +865,10 @@ export function batchUpsertProtoDefs(items: Array<{
           m.requestType = item.requestType,
           m.responseType = item.responseType,
           m.packageName = item.packageName,
-          m.protoFile = item.protoFile
+          m.protoFile = item.protoFile,
+          m.goPackage = item.goPackage
     `,
-    params: { items },
+    params: { items: items.map((i) => ({ ...i, goPackage: i.goPackage ?? null })) },
   };
 }
 
@@ -444,7 +882,8 @@ export function loadAllProtoDefs(): CypherQuery {
              m.requestType AS requestType,
              m.responseType AS responseType,
              m.packageName AS packageName,
-             m.protoFile AS protoFile
+             m.protoFile AS protoFile,
+             m.goPackage AS goPackage
     `,
     params: {},
   };
@@ -463,6 +902,72 @@ export function batchDeleteOrphanProtoMethods(
       DETACH DELETE m
     `,
     params: { keep, protoFilePathPrefix },
+  };
+}
+
+export function batchUpsertProtoMessages(items: Array<{
+  messageName: string;
+  packageName: string;
+  protoFile: string;
+  goPackage?: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MERGE (m:ProtoMessage {messageName: item.messageName, packageName: item.packageName})
+      SET m.protoFile = item.protoFile,
+          m.goPackage = item.goPackage
+    `,
+    params: { items: items.map((i) => ({ ...i, goPackage: i.goPackage ?? null })) },
+  };
+}
+
+export function loadAllProtoMessages(): CypherQuery {
+  return {
+    cypher: `
+      MATCH (m:ProtoMessage)
+      RETURN m.messageName AS messageName,
+             m.packageName AS packageName,
+             m.protoFile AS protoFile,
+             m.goPackage AS goPackage
+    `,
+    params: {},
+  };
+}
+
+export function batchDeleteOrphanProtoMessages(
+  keep: Array<{ messageName: string; packageName: string }>,
+  protoFilePathPrefix: string
+): CypherQuery {
+  return {
+    cypher: `
+      WITH [k IN $keep | k.packageName + "::" + k.messageName] AS keepKeys
+      MATCH (m:ProtoMessage)
+      WHERE m.protoFile STARTS WITH $protoFilePathPrefix
+        AND NOT (m.packageName + "::" + m.messageName) IN keepKeys
+      DETACH DELETE m
+    `,
+    params: { keep, protoFilePathPrefix },
+  };
+}
+
+export function batchUpsertMessageUsageRelationships(items: Array<{
+  functionName: string;
+  filePath: string;
+  role: "producer" | "consumer" | "uses";
+  messageName: string;
+  packageName: string;
+}>): CypherQuery {
+  return {
+    cypher: `
+      UNWIND $items AS item
+      MATCH (fn:Function {name: item.functionName, filePath: item.filePath})
+      MATCH (m:ProtoMessage {messageName: item.messageName, packageName: item.packageName})
+      MERGE (fn)-[r:USES_PROTO {role: item.role}]->(m)
+      SET r.messageName = item.messageName,
+          r.packageName = item.packageName
+    `,
+    params: { items },
   };
 }
 

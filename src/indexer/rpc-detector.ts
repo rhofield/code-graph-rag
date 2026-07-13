@@ -1,16 +1,31 @@
 import type Parser from "web-tree-sitter";
-import type { ProtoRegistry } from "./proto-registry.js";
+import type { ProtoRegistry, ProtoRpcDef } from "./proto-registry.js";
 
 export interface RpcAnnotation {
   functionName: string;
   filePath: string;
-  role: "caller" | "handler";
+  role: "caller" | "handler" | "consumer";
   serviceName: string;
   methodName: string;
 }
 
 function getNodeText(node: Parser.SyntaxNode, source: string): string {
   return source.slice(node.startIndex, node.endIndex);
+}
+
+function cleanPropertyName(text: string): string {
+  return text.replace(/^['"`]|['"`]$/g, "");
+}
+
+function pushUniqueAnnotation(out: RpcAnnotation[], annotation: RpcAnnotation): void {
+  const exists = out.some((a) =>
+    a.functionName === annotation.functionName &&
+    a.filePath === annotation.filePath &&
+    a.role === annotation.role &&
+    a.serviceName === annotation.serviceName &&
+    a.methodName === annotation.methodName
+  );
+  if (!exists) out.push(annotation);
 }
 
 function identifierTokens(text: string): string[] {
@@ -65,12 +80,24 @@ function pickByReceiver<T extends { serviceName: string }>(
 
 // --- Gate checks: does this file import gRPC-generated code? ---
 
-function hasGrpcImportsGo(root: Parser.SyntaxNode, source: string): boolean {
+export function hasGrpcImportsGo(
+  root: Parser.SyntaxNode,
+  source: string,
+  registry?: ProtoRegistry
+): boolean {
   for (let i = 0; i < root.childCount; i++) {
     const child = root.child(i)!;
     if (child.type === "import_declaration") {
       const text = getNodeText(child, source);
       if (/pb["'\s]|proto["'\s]|grpc["'\s]/i.test(text)) return true;
+      // The path-name heuristic above misses codegen layouts like buf's gen/
+      // directories. The proto's `option go_package` declares the exact import
+      // path of generated code, so match import strings against the registry.
+      if (registry) {
+        for (const match of text.matchAll(/"([^"]+)"/g)) {
+          if (registry.hasGoPackagePath(match[1])) return true;
+        }
+      }
     }
   }
   return false;
@@ -451,8 +478,87 @@ function detectTypeScriptHandlers(root: Parser.SyntaxNode, source: string, fileP
   walk(root);
 }
 
+function lookupServiceMethodByCallName(
+  registry: ProtoRegistry,
+  serviceName: string,
+  callName: string
+): ProtoRpcDef | null {
+  return registry.getServiceMethods(serviceName).find((def) =>
+    def.methodName === callName || def.methodCamel === callName
+  ) ?? null;
+}
+
+function findTypeScriptCallsInBody(
+  node: Parser.SyntaxNode,
+  source: string,
+  enclosingFuncName: string,
+  filePath: string,
+  registry: ProtoRegistry,
+  connectClients: Map<string, string>,
+  out: RpcAnnotation[]
+): void {
+  function walk(n: Parser.SyntaxNode): void {
+    if (n.type === "call_expression" || n.type === "call") {
+      const fnNode = n.childForFieldName("function");
+      if (fnNode && fnNode.type === "member_expression") {
+        const fieldNode = fnNode.childForFieldName("property");
+        const objNode = fnNode.childForFieldName("object");
+        if (fieldNode && objNode) {
+          const serviceName = connectClients.get(getNodeText(objNode, source));
+          const def = serviceName
+            ? lookupServiceMethodByCallName(registry, serviceName, getNodeText(fieldNode, source))
+            : null;
+          if (def) {
+            pushUniqueAnnotation(out, {
+              functionName: enclosingFuncName,
+              filePath,
+              role: "caller",
+              serviceName: def.serviceName,
+              methodName: def.methodName,
+            });
+            return;
+          }
+        }
+      }
+
+      findCallsInBody(n, source, enclosingFuncName, filePath, registry, out);
+      return;
+    }
+
+    for (let i = 0; i < n.childCount; i++) walk(n.child(i)!);
+  }
+
+  walk(node);
+}
+
 function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  const connectClients = collectTypeScriptConnectClients(root, source, registry);
+
   function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "pair") {
+      const nameNode = node.childForFieldName("key");
+      const valueNode = node.childForFieldName("value");
+      if (
+        nameNode &&
+        valueNode &&
+        (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
+      ) {
+        const body = valueNode.childForFieldName("body");
+        if (body) {
+          findTypeScriptCallsInBody(
+            body,
+            source,
+            cleanPropertyName(getNodeText(nameNode, source)),
+            filePath,
+            registry,
+            connectClients,
+            out
+          );
+        }
+        return;
+      }
+    }
+
     // Named arrow / function-expression assigned to a const/let: pull the name
     // from the variable_declarator; the arrow itself has no `name` field.
     if (node.type === "variable_declarator") {
@@ -464,14 +570,34 @@ function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath
         (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
       ) {
         const body = valueNode.childForFieldName("body");
-        if (body) findCallsInBody(body, source, getNodeText(nameNode, source), filePath, registry, out);
+        if (body) {
+          findTypeScriptCallsInBody(
+            body,
+            source,
+            getNodeText(nameNode, source),
+            filePath,
+            registry,
+            connectClients,
+            out
+          );
+        }
         return;
       }
     }
 
     if (node.type === "function_declaration" || node.type === "method_definition") {
       const nameNode = node.childForFieldName("name");
-      if (nameNode) findCallsInBody(node, source, getNodeText(nameNode, source), filePath, registry, out);
+      if (nameNode) {
+        findTypeScriptCallsInBody(
+          node,
+          source,
+          getNodeText(nameNode, source),
+          filePath,
+          registry,
+          connectClients,
+          out
+        );
+      }
       return;
     }
 
@@ -482,6 +608,251 @@ function detectTypeScriptCalls(root: Parser.SyntaxNode, source: string, filePath
 
     for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
   }
+  walkFns(root);
+}
+
+export function parseNamedTypeScriptImports(importText: string): string[] {
+  const named = importText.match(/\{([\s\S]*?)\}/);
+  if (!named) return [];
+  return named[1]
+    .split(",")
+    .map((part) => part.trim().replace(/^type\s+/, ""))
+    .filter(Boolean)
+    .map((part) => {
+      const alias = part.split(/\s+as\s+/i);
+      return alias[alias.length - 1].trim();
+    })
+    .filter(Boolean);
+}
+
+function parseNamedTypeScriptImportBindings(importText: string): Array<{ imported: string; local: string }> {
+  const named = importText.match(/\{([\s\S]*?)\}/);
+  if (!named) return [];
+  return named[1]
+    .split(",")
+    .map((part) => part.trim().replace(/^type\s+/, ""))
+    .filter(Boolean)
+    .map((part) => {
+      const alias = part.split(/\s+as\s+/i).map((p) => p.trim()).filter(Boolean);
+      return alias.length === 2
+        ? { imported: alias[0], local: alias[1] }
+        : { imported: part, local: part };
+    });
+}
+
+export function parseNamespaceTypeScriptImports(importText: string): string[] {
+  const namespace = importText.match(/import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\b/);
+  return namespace ? [namespace[1]] : [];
+}
+
+export function parseTypeScriptImportSource(importText: string): string | null {
+  const source = importText.match(/\bfrom\s+["']([^"']+)["']/);
+  return source ? source[1] : null;
+}
+
+export function isTypeScriptProtoImportSource(importSource: string): boolean {
+  const source = importSource.toLowerCase();
+  return (
+    source.includes("bufbuild") ||
+    source.includes("_grpc_pb") ||
+    source.includes("_pb") ||
+    source.includes("grpc") ||
+    source.includes("protobuf") ||
+    /(^|[/_.-])proto(s)?([/_.-]|$)/.test(source)
+  );
+}
+
+function inferProtoPackagesFromTypeScriptImportSource(importSource: string): string[] {
+  const parts = importSource.split("?")[0].split("/").filter(Boolean);
+  const candidates = new Set<string>();
+
+  for (let i = 1; i < parts.length; i++) {
+    if (/^v\d+(?:[a-z]\w*)?$/i.test(parts[i])) {
+      candidates.add(`${parts[i - 1]}.${parts[i]}`);
+    }
+  }
+
+  return [...candidates];
+}
+
+function protoDefsForImportedTypeName(name: string, registry: ProtoRegistry): ProtoRpcDef[] {
+  const defs: ProtoRpcDef[] = [];
+  for (const serviceName of registry.getAllServices()) {
+    const serviceMethods = registry.getServiceMethods(serviceName);
+    for (const def of serviceMethods) {
+      if (name === def.requestType || name === def.responseType) {
+        defs.push(def);
+      }
+    }
+  }
+  return defs;
+}
+
+function collectTypeScriptProtoImports(
+  root: Parser.SyntaxNode,
+  source: string,
+  registry: ProtoRegistry
+): { named: Map<string, ProtoRpcDef[]>; namespaces: string[] } {
+  const imports = new Map<string, ProtoRpcDef[]>();
+  const namespaces: string[] = [];
+
+  for (let i = 0; i < root.childCount; i++) {
+    const child = root.child(i)!;
+    if (child.type !== "import_statement") continue;
+
+    const text = getNodeText(child, source);
+    const importSource = parseTypeScriptImportSource(text);
+    if (!importSource || !isTypeScriptProtoImportSource(importSource)) continue;
+
+    namespaces.push(...parseNamespaceTypeScriptImports(text));
+
+    const names = parseNamedTypeScriptImports(text);
+    if (names.length === 0) continue;
+
+    const packageCandidates = inferProtoPackagesFromTypeScriptImportSource(importSource);
+    for (const name of names) {
+      const packageDefs = packageCandidates.flatMap((pkg) =>
+        registry.lookupByMessageTypeInPackage(name, pkg)
+      );
+      const defs = packageDefs.length > 0 ? packageDefs : protoDefsForImportedTypeName(name, registry);
+      if (defs.length === 1) {
+        imports.set(name, defs);
+      }
+    }
+  }
+
+  return { named: imports, namespaces: [...new Set(namespaces)] };
+}
+
+function collectTypeScriptConnectClients(
+  root: Parser.SyntaxNode,
+  source: string,
+  registry: ProtoRegistry
+): Map<string, string> {
+  const importedServices = new Map<string, string>();
+  const clients = new Map<string, string>();
+
+  for (let i = 0; i < root.childCount; i++) {
+    const child = root.child(i)!;
+    if (child.type !== "import_statement") continue;
+
+    const text = getNodeText(child, source);
+    const importSource = parseTypeScriptImportSource(text);
+    if (!importSource || !importSource.toLowerCase().includes("connect")) continue;
+
+    const packageCandidates = inferProtoPackagesFromTypeScriptImportSource(importSource);
+    for (const binding of parseNamedTypeScriptImportBindings(text)) {
+      if (!registry.getAllServices().includes(binding.imported)) continue;
+      if (
+        packageCandidates.length > 0 &&
+        !packageCandidates.some((pkg) =>
+          registry.getServiceMethodsInPackage(pkg, binding.imported).length > 0
+        )
+      ) {
+        continue;
+      }
+      importedServices.set(binding.local, binding.imported);
+    }
+  }
+
+  function walk(node: Parser.SyntaxNode): void {
+    if (node.type === "variable_declarator") {
+      const nameNode = node.childForFieldName("name");
+      const valueNode = node.childForFieldName("value");
+      if (nameNode && valueNode) {
+        const match = getNodeText(valueNode, source).match(
+          /\bcreatePromiseClient\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\b/
+        );
+        const serviceName = match ? importedServices.get(match[1]) : null;
+        if (serviceName) clients.set(getNodeText(nameNode, source), serviceName);
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i)!);
+  }
+
+  walk(root);
+  return clients;
+}
+
+function detectTypeScriptConsumers(root: Parser.SyntaxNode, source: string, filePath: string, registry: ProtoRegistry, out: RpcAnnotation[]): void {
+  const protoImports = collectTypeScriptProtoImports(root, source, registry);
+  if (protoImports.named.size === 0 && protoImports.namespaces.length === 0) return;
+
+  function annotateIfUsesImportedProto(functionName: string, node: Parser.SyntaxNode): void {
+    const text = getNodeText(node, source);
+    for (const [localName, defs] of protoImports.named) {
+      if (!new RegExp(`\\b${localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text)) continue;
+      for (const def of defs) {
+        pushUniqueAnnotation(out, {
+          functionName,
+          filePath,
+          role: "consumer",
+          serviceName: def.serviceName,
+          methodName: def.methodName,
+        });
+      }
+    }
+
+    for (const namespace of protoImports.namespaces) {
+      const escaped = namespace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const memberPattern = new RegExp(`\\b${escaped}\\.([A-Za-z_$][A-Za-z0-9_$]*)\\b`, "g");
+      for (const match of text.matchAll(memberPattern)) {
+        const defs = protoDefsForImportedTypeName(match[1], registry);
+        if (defs.length !== 1) continue;
+        pushUniqueAnnotation(out, {
+          functionName,
+          filePath,
+          role: "consumer",
+          serviceName: defs[0].serviceName,
+          methodName: defs[0].methodName,
+        });
+      }
+    }
+  }
+
+  function walkFns(node: Parser.SyntaxNode): void {
+    if (node.type === "pair") {
+      const nameNode = node.childForFieldName("key");
+      const valueNode = node.childForFieldName("value");
+      if (
+        nameNode &&
+        valueNode &&
+        (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
+      ) {
+        annotateIfUsesImportedProto(cleanPropertyName(getNodeText(nameNode, source)), valueNode);
+        return;
+      }
+    }
+
+    if (node.type === "variable_declarator") {
+      const nameNode = node.childForFieldName("name");
+      const valueNode = node.childForFieldName("value");
+      if (
+        nameNode &&
+        valueNode &&
+        (valueNode.type === "arrow_function" || valueNode.type === "function_expression")
+      ) {
+        annotateIfUsesImportedProto(getNodeText(nameNode, source), valueNode);
+        return;
+      }
+    }
+
+    if (node.type === "function_declaration" || node.type === "method_definition") {
+      const nameNode = node.childForFieldName("name");
+      if (nameNode) {
+        annotateIfUsesImportedProto(getNodeText(nameNode, source), node);
+        return;
+      }
+    }
+
+    if (node.type === "arrow_function" || node.type === "function_expression") {
+      return;
+    }
+
+    for (let i = 0; i < node.childCount; i++) walkFns(node.child(i)!);
+  }
+
   walkFns(root);
 }
 
@@ -542,7 +913,7 @@ function detectJavaCalls(root: Parser.SyntaxNode, source: string, filePath: stri
 // --- Per-language dispatch ---
 
 function detectGo(tree: Parser.Tree, source: string, filePath: string, registry: ProtoRegistry): RpcAnnotation[] {
-  if (!hasGrpcImportsGo(tree.rootNode, source)) return [];
+  if (!hasGrpcImportsGo(tree.rootNode, source, registry)) return [];
   const out: RpcAnnotation[] = [];
   detectGoHandlers(tree.rootNode, source, filePath, registry, out);
   detectGoCalls(tree.rootNode, source, filePath, registry, out);
@@ -564,6 +935,7 @@ function detectTypeScript(tree: Parser.Tree, source: string, filePath: string, r
     detectTypeScriptHandlers(tree.rootNode, source, filePath, registry, out);
   }
   detectTypeScriptCalls(tree.rootNode, source, filePath, registry, out);
+  detectTypeScriptConsumers(tree.rootNode, source, filePath, registry, out);
   return out;
 }
 

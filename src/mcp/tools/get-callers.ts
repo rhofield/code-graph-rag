@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { DbConnection } from "../../db/connection.js";
+import { functionCallersQuery } from "../../db/queries.js";
 
 export function registerGetCallers(server: McpServer, db: DbConnection): void {
   server.tool(
@@ -13,22 +14,8 @@ export function registerGetCallers(server: McpServer, db: DbConnection): void {
     async ({ functionName, filePath }) => {
       const session = db.session();
       try {
-        let cypher = `
-          MATCH (callee:Function {name: $functionName})
-        `;
-        const params: Record<string, unknown> = { functionName };
-        if (filePath) {
-          cypher += ` WHERE callee.filePath = $filePath`;
-          params.filePath = filePath;
-        }
-        cypher += `
-          MATCH (caller:Function)-[r:CALLS|RPC_CALLS]->(callee)
-          RETURN caller.name AS callerName, caller.filePath AS callerFilePath,
-                 caller.signature AS signature, caller.startLine AS startLine,
-                 type(r) AS callType, r.serviceName AS rpcService, r.methodName AS rpcMethod
-          ORDER BY callerFilePath, callerName
-        `;
-        const result = await session.run(cypher, params);
+        const q = functionCallersQuery({ functionName, filePath });
+        const result = await session.run(q.cypher, q.params);
         const records = result.records.map((r) => r.toObject());
         return {
           content: [{ type: "text", text: JSON.stringify(records, null, 2) }],

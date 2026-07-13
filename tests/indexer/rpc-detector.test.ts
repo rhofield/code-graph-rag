@@ -77,6 +77,35 @@ describe("RPC Detector — Go", () => {
     expect(callers[0].serviceName).toBe("UserService");
     expect(callers[0].methodName).toBe("GetUser");
   });
+
+  it("annotates generated Go gRPC dispatchers with their canonical proto method", async () => {
+    const realisticReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package users.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserReply);
+      }
+    `, "/protos/users.proto", realisticReg);
+
+    const parsed = await parseFile(resolve("tests/fixtures/pubsub-realistic/workspace/backend-go/gen/users/v1/users_grpc.pb.go"));
+    const annotations = detectRpcPatterns(
+      parsed!.tree,
+      parsed!.language,
+      parsed!.source,
+      "users_grpc.pb.go",
+      realisticReg
+    );
+    parsed!.tree.delete();
+
+    expect(annotations).toContainEqual({
+      functionName: "_UserService_GetUser_Handler",
+      filePath: "users_grpc.pb.go",
+      role: "caller",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
 });
 
 describe("RPC Detector — Python", () => {
@@ -184,6 +213,135 @@ describe("RPC Detector — TypeScript", () => {
     const callers = ann.filter((a) => a.role === "caller");
     expect(callers).toHaveLength(1);
     expect(callers[0].serviceName).toBe("UserServiceHelper");
+  });
+
+  it("detects RPC calls inside GraphQL resolver object property arrows using generated node packages", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-resolver.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-resolver.ts", registry);
+    parsed!.tree.delete();
+
+    const callers = annotations.filter((a) => a.role === "caller");
+    expect(callers).toContainEqual({
+      functionName: "user",
+      filePath: "ts-graphql-resolver.ts",
+      role: "caller",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
+
+  it("detects GraphQL resolvers consuming generated proto types from bare node packages", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-proto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-proto-consumer.ts", registry);
+    parsed!.tree.delete();
+
+    expect(annotations).toContainEqual({
+      functionName: "user",
+      filePath: "ts-graphql-proto-consumer.ts",
+      role: "consumer",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
+
+  it("does not treat local DTO imports as proto consumers", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-local-dto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-local-dto-consumer.ts", registry);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "consumer")).toEqual([]);
+  });
+
+  it("detects GraphQL resolvers consuming generated proto types through namespace imports", async () => {
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-namespace-proto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-namespace-proto-consumer.ts", registry);
+    parsed!.tree.delete();
+
+    expect(annotations).toContainEqual({
+      functionName: "user",
+      filePath: "ts-graphql-namespace-proto-consumer.ts",
+      role: "consumer",
+      serviceName: "UserService",
+      methodName: "GetUser",
+    });
+  });
+
+  it("does not annotate every method that shares a common proto message type", async () => {
+    const sharedReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (SharedRequest) returns (SharedResponse);
+        rpc CreateUser (SharedRequest) returns (SharedResponse);
+      }
+    `, "/protos/shared.proto", sharedReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-shared-proto-type.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-shared-proto-type.ts", sharedReg);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "consumer")).toEqual([]);
+  });
+
+  it("uses Connect service imports to disambiguate generic client variables", async () => {
+    const ambiguousReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+      service AdminService {
+        rpc GetUser (AdminGetUserRequest) returns (AdminGetUserResponse);
+      }
+    `, "/protos/ambiguous-connect.proto", ambiguousReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-connect-ambiguous-client.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-connect-ambiguous-client.ts", ambiguousReg);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "caller")).toEqual([
+      {
+        functionName: "user",
+        filePath: "ts-connect-ambiguous-client.ts",
+        role: "caller",
+        serviceName: "UserService",
+        methodName: "GetUser",
+      },
+    ]);
+  });
+
+  it("uses generated package import paths to disambiguate duplicate proto message names", async () => {
+    const packageReg = createProtoRegistry();
+    parseProtoSource(`
+      syntax = "proto3";
+      package user.v1;
+      service UserService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+    `, "/protos/user.proto", packageReg);
+    parseProtoSource(`
+      syntax = "proto3";
+      package admin.v1;
+      service AdminService {
+        rpc GetUser (GetUserRequest) returns (GetUserResponse);
+      }
+    `, "/protos/admin.proto", packageReg);
+
+    const parsed = await parseFile(resolve(FIXTURES, "ts-graphql-package-proto-consumer.ts"));
+    const annotations = detectRpcPatterns(parsed!.tree, parsed!.language, parsed!.source, "ts-graphql-package-proto-consumer.ts", packageReg);
+    parsed!.tree.delete();
+
+    expect(annotations.filter((a) => a.role === "consumer")).toEqual([
+      {
+        functionName: "user",
+        filePath: "ts-graphql-package-proto-consumer.ts",
+        role: "consumer",
+        serviceName: "UserService",
+        methodName: "GetUser",
+      },
+    ]);
   });
 });
 

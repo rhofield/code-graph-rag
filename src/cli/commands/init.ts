@@ -15,14 +15,17 @@ import { printResolveResult, removeRepoFromGraph } from "../../indexer/graph-cle
 import { indexRepository } from "../../indexer/index.js";
 import { resolveRepos } from "../../indexer/resolve-repos.js";
 import { indexWorkspace } from "../../indexer/workspace.js";
+import { startProgressHeartbeat } from "../progress.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export async function runInit(): Promise<void> {
   const repoPath = resolve(".");
   const config = loadConfig(repoPath);
+  const heartbeat = startProgressHeartbeat("Initializing rho-graph...");
 
   if (config.neo4j.managed) {
+    heartbeat.update("Checking prerequisites...");
     const spinner = ora("Checking prerequisites...").start();
     if (!isDockerAvailable()) {
       spinner.fail(
@@ -32,6 +35,7 @@ export async function runInit(): Promise<void> {
     }
     spinner.succeed("Docker available");
 
+    heartbeat.update("Starting Neo4j...");
     const neo4jSpinner = ora("Starting Neo4j...").start();
     const composePath = resolve(__dirname, "../../../docker-compose.yml");
     startNeo4j(composePath);
@@ -44,6 +48,7 @@ export async function runInit(): Promise<void> {
   }
 
   const db = createConnection(config.neo4j);
+  heartbeat.update("Setting up schema...");
   const schemaSpinner = ora("Setting up schema...").start();
   await setupSchema(db);
   schemaSpinner.succeed("Schema ready");
@@ -57,9 +62,22 @@ export async function runInit(): Promise<void> {
 
   if (resolved.mode === "workspace") {
     const wsSpinner = ora(`Indexing workspace (${resolved.repos.length} repos)...`).start();
+    heartbeat.update(`Indexing workspace (${resolved.repos.length} repos)...`);
     const result = await indexWorkspace(db, repoPath, resolved.repos, config.index, {
       onRepoStart: (name, _path, i, total) => {
-        wsSpinner.text = `Indexing ${name} (${i + 1}/${total})...`;
+        const message = `Indexing ${name} (${i + 1}/${total})...`;
+        wsSpinner.text = message;
+        heartbeat.update(message);
+      },
+      onProgress: (current, total, file) => {
+        const message = `Parsing files... ${current}/${total} (${file})`;
+        wsSpinner.text = message;
+        heartbeat.update(message);
+      },
+      onFlushProgress: (completed, total) => {
+        const message = `Writing to database... ${completed}/${total} batches`;
+        wsSpinner.text = message;
+        heartbeat.update(message);
       },
     });
     wsSpinner.succeed(
@@ -74,9 +92,17 @@ export async function runInit(): Promise<void> {
     }
   } else {
     const indexSpinner = ora("Indexing repository...").start();
+    heartbeat.update("Indexing repository...");
     const result = await indexRepository(db, repoPath, config.index, {
-      onProgress: (current, total) => {
-        indexSpinner.text = `Indexing... ${current}/${total}`;
+      onProgress: (current, total, file) => {
+        const message = `Indexing... ${current}/${total} (${file})`;
+        indexSpinner.text = message;
+        heartbeat.update(message);
+      },
+      onFlushProgress: (completed, total) => {
+        const message = `Writing to database... ${completed}/${total} batches`;
+        indexSpinner.text = message;
+        heartbeat.update(message);
       },
     });
     indexSpinner.succeed(
@@ -91,6 +117,7 @@ export async function runInit(): Promise<void> {
   }
 
   await db.close();
+  heartbeat.stop();
 }
 
 export function registerInitCommand(program: Command): void {

@@ -7,10 +7,18 @@ import {
   upsertClass,
   upsertCallRelationship,
   upsertImportRelationship,
+  batchUpsertProtoUsageRelationships,
   deleteFileAndRelationships,
   upsertRepositoryWithCommit,
   getRepositoryCommit,
   deleteRepositoryAndFiles,
+  batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLUsages,
+  batchUpsertGraphQLFragmentSpreads,
+  batchUpsertGraphQLResolverLinks,
+  clearGraphQLResolverLinks,
+  resolveGraphQLResolverLinks,
+  functionCallersQuery,
 } from "../../src/db/queries.js";
 
 describe("query builders", () => {
@@ -89,6 +97,22 @@ describe("query builders", () => {
     expect(params.sourceFilePath).toBe("/home/user/project/src/router.ts");
   });
 
+  it("batchUpsertProtoUsageRelationships links functions to ProtoMethod nodes", () => {
+    const { cypher, params } = batchUpsertProtoUsageRelationships([
+      {
+        functionName: "user",
+        filePath: "/repo/resolvers.ts",
+        serviceName: "UserService",
+        methodName: "GetUser",
+        role: "consumer",
+      },
+    ]);
+
+    expect(cypher).toContain("ProtoMethod");
+    expect(cypher).toContain("USES_PROTO");
+    expect(params.items).toHaveLength(1);
+  });
+
   it("deleteFileAndRelationships returns valid cypher", () => {
     const { cypher, params } = deleteFileAndRelationships({
       filePath: "/home/user/project/src/old.ts",
@@ -111,6 +135,223 @@ describe("query builders", () => {
     const { cypher, params } = getRepositoryCommit({ path: "/project" });
     expect(cypher).toContain("lastIndexedCommit");
     expect(params.path).toBe("/project");
+  });
+
+  it("functionCallersQuery includes proto peers that share a ProtoMethod", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("CALLS|RPC_CALLS");
+    expect(cypher).toContain("USES_PROTO");
+    expect(cypher).toContain("ProtoMethod");
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("USES_GRAPHQL");
+    expect(cypher).toContain("graphqlDocument");
+    expect(cypher).toContain("graphqlResolver");
+    expect(cypher).toContain("peerUse.role");
+    expect(cypher).toContain('peerUse.role IN ["consumer", "caller"]');
+    expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
+    expect(params).toEqual({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+  });
+
+  it("functionCallersQuery traverses from generated proto dispatcher targets to GraphQL resolvers first", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "_UserService_GetUser_Handler",
+      filePath: "/repo/gen/users_grpc.pb.go",
+    });
+
+    expect(cypher).toContain("dispatcherUse.role IN");
+    expect(cypher).toContain("USES_GRAPHQL_PROTO_DISPATCHER");
+    expect(cypher).toContain('resolverUse.role IN ["consumer", "caller"]');
+    expect(cypher).toContain("generated proto dispatcher");
+    expect(cypher).toContain('"USES_GRAPHQL_PROTO_DISPATCHER" AS callType');
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("RETURN caller,");
+  });
+
+  it("functionCallersQuery filters generated protobuf callers from direct call results", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("isGeneratedProtoCaller");
+    expect(cypher).toContain("generated.pb.go");
+    expect(cypher).toContain('coalesce(caller.filePath, "") ENDS WITH ".pb.go"');
+    expect(cypher).toContain('coalesce(caller.filePath, "") ENDS WITH "_pb.ts"');
+    expect(cypher).toContain("NOT isGeneratedProtoCaller");
+  });
+
+  it("functionCallersQuery collapses generated proto callers of a real handler through the canonical proto method", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("generated proto caller bridge");
+    expect(cypher).toContain("generatedCaller");
+    expect(cypher).toContain("generatedUse.role IN");
+    expect(cypher).toContain("USES_GRAPHQL_PROTO_GENERATED_CALLER");
+    expect(cypher).toContain('"USES_GRAPHQL_PROTO_GENERATED_CALLER" AS callType');
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("RETURN caller,");
+  });
+
+  it("functionCallersQuery returns frontend GraphQL users instead of resolvers as callers", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "getUser",
+      filePath: "/repo/user-service/src/handler.ts",
+    });
+
+    expect(cypher).toContain('"USES_GRAPHQL_RESOLVER" AS callType');
+    expect(cypher).toContain("MATCH (caller:Function)-[:USES_GRAPHQL]->(doc)");
+    expect(cypher).toContain("target.name AS graphqlResolver");
+    expect(cypher).not.toContain("RETURN resolver AS caller");
+  });
+
+  it("functionCallersQuery returns the canonical proto method as a bridge caller", () => {
+    const { cypher } = functionCallersQuery({
+      functionName: "GetUser",
+      filePath: "/repo/service/handler.go",
+    });
+
+    expect(cypher).toContain("PROTO_CANONICAL");
+    expect(cypher).toContain("proto.serviceName + \".\" + proto.methodName");
+    expect(cypher).toContain("proto.protoFile");
+  });
+
+  it("functionCallersQuery can target a canonical proto method and return graph-layer proto users", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "UserService.GetUser",
+    });
+
+    expect(cypher).toContain("target:ProtoMethod");
+    expect(cypher).toContain('target.serviceName + "." + target.methodName = $functionName');
+    expect(cypher).toContain("target.protoFile = $functionName");
+    expect(cypher).toContain("proto target: graph-layer functions that call or consume the canonical proto");
+    expect(cypher).toContain("MATCH (caller:Function)-[protoUse:USES_PROTO]->(target)");
+    expect(cypher).toContain('protoUse.role IN ["consumer", "caller"]');
+    expect(cypher).toContain("NOT isGeneratedProtoCaller");
+    expect(params).toEqual({
+      functionName: "UserService.GetUser",
+      filePath: null,
+    });
+  });
+
+  it("functionCallersQuery can return only lean human-facing caller columns", () => {
+    const { cypher, params } = functionCallersQuery({
+      functionName: "GetUser",
+      verbose: false,
+    });
+
+    expect(cypher).toContain("caller.name AS caller");
+    expect(cypher).toContain("caller.filePath AS file");
+    const outputClause = cypher.slice(cypher.lastIndexOf("RETURN DISTINCT"));
+    expect(outputClause).not.toContain("callerName");
+    expect(outputClause).not.toContain("callerFunction");
+    expect(outputClause).not.toContain("caller.signature AS signature");
+    expect(outputClause).not.toContain("callType");
+    expect(outputClause).not.toContain("graphqlResolver");
+    expect(params).toEqual({
+      functionName: "GetUser",
+      filePath: null,
+    });
+  });
+
+  it("batchUpsertGraphQLDocuments merges GraphQLDocument nodes and links files when present", () => {
+    const { cypher, params } = batchUpsertGraphQLDocuments([
+      {
+        name: "GetUser",
+        kind: "query",
+        filePath: "/project/src/User.tsx",
+        startLine: 3,
+        endLine: 9,
+        signature: "query GetUser",
+        snippet: "query GetUser { user { id } }",
+        variableName: "GET_USER",
+        resolverFieldNames: ["user"],
+      },
+    ]);
+
+    expect(cypher).toContain("GraphQLDocument");
+    expect(cypher).toContain("CONTAINS");
+    expect(cypher).toContain("variableName");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLResolverLinks links operation documents to resolver functions by field name", () => {
+    const { cypher, params } = batchUpsertGraphQLResolverLinks([
+      {
+        name: "GetUser",
+        kind: "query",
+        filePath: "/project/src/User.tsx",
+        startLine: 3,
+        endLine: 9,
+        signature: "query GetUser",
+        snippet: "query GetUser { user { id } }",
+        variableName: "GET_USER",
+        resolverFieldNames: ["user"],
+      },
+    ]);
+
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("resolverFieldNames");
+    expect(cypher).toContain(":Function");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLUsages links frontend functions to GraphQL documents", () => {
+    const { cypher, params } = batchUpsertGraphQLUsages([
+      {
+        sourceName: "UserCard",
+        sourceFilePath: "/project/src/User.tsx",
+        documentName: "GetUser",
+        documentFilePath: "/project/src/User.tsx",
+      },
+    ]);
+
+    expect(cypher).toContain("USES_GRAPHQL");
+    expect(cypher).toContain("GraphQLDocument");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("batchUpsertGraphQLFragmentSpreads links documents to spread fragments", () => {
+    const { cypher, params } = batchUpsertGraphQLFragmentSpreads([
+      {
+        sourceDocumentName: "GetUser",
+        sourceDocumentFilePath: "/project/src/User.tsx",
+        targetFragmentName: "UserFields",
+        targetFragmentFilePath: "/project/src/User.tsx",
+      },
+    ]);
+
+    expect(cypher).toContain("USES_FRAGMENT");
+    expect(cypher).toContain("GraphQLDocument");
+    expect(params.items).toHaveLength(1);
+  });
+
+  it("clearGraphQLResolverLinks deletes stale resolver edges for a relink scope", () => {
+    const { cypher, params } = clearGraphQLResolverLinks(["/project/src/User.tsx"]);
+
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(cypher).toContain("DELETE r");
+    expect(cypher).toContain("doc.filePath IN $filePaths");
+    expect(params.filePaths).toEqual(["/project/src/User.tsx"]);
+  });
+
+  it("resolveGraphQLResolverLinks recreates resolver edges from stored field names", () => {
+    const { cypher, params } = resolveGraphQLResolverLinks([]);
+
+    expect(cypher).toContain("GraphQLDocument");
+    expect(cypher).toContain("resolverFieldNames");
+    expect(cypher).toContain("MATCH (resolver:Function {name: fieldName})");
+    expect(cypher).toContain("USES_GRAPHQL_RESOLVER");
+    expect(params.filePaths).toEqual([]);
   });
 });
 

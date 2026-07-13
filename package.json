@@ -12,6 +12,8 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "INTEGRATION=1 vitest run",
+    "db:test": "docker compose --profile test up -d neo4j-test",
     "lint": "tsc --noEmit"
   },
   "keywords": [

@@ -66,6 +66,17 @@ describe("ProtoRegistry", () => {
     expect(results).toHaveLength(2);
   });
 
+  it("is idempotent: re-registering the same def does not duplicate method lookups", () => {
+    // A proto file can be parsed into the same registry more than once
+    // (workspace pre-scan + per-repo indexing). Duplicate methodIndex entries
+    // break callers that rely on lookupByMethod returning exactly one def.
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register(USER_GET);
+    expect(reg.lookupByMethod("GetUser")).toHaveLength(1);
+    expect(reg.lookupByMethod("getUser")).toHaveLength(1);
+  });
+
   it("lists all methods for a service", () => {
     const reg = createProtoRegistry();
     reg.register(USER_GET);
@@ -81,5 +92,31 @@ describe("ProtoRegistry", () => {
     reg.register(USER_GET);
     reg.register(AUTH_VALIDATE);
     expect(reg.getAllServices().sort()).toEqual(["AuthService", "UserService"]);
+  });
+
+  it("looks up service methods by package and service name", () => {
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register(USER_CREATE);
+    reg.register(AUTH_VALIDATE);
+
+    expect(reg.getServiceMethodsInPackage("user.v1", "UserService").map((m) => m.methodName).sort())
+      .toEqual(["CreateUser", "GetUser"]);
+    expect(reg.getServiceMethodsInPackage("auth.v1", "UserService")).toEqual([]);
+  });
+
+  it("looks up RPC defs by generated message type and package", () => {
+    const reg = createProtoRegistry();
+    reg.register(USER_GET);
+    reg.register({
+      ...AUTH_VALIDATE,
+      methodName: "GetUser",
+      methodCamel: "getUser",
+      requestType: "GetUserRequest",
+      responseType: "GetUserResponse",
+    });
+
+    expect(reg.lookupByMessageTypeInPackage("GetUserResponse", "user.v1")).toEqual([USER_GET]);
+    expect(reg.lookupByMessageTypeInPackage("GetUserResponse", "auth.v1")).toHaveLength(1);
   });
 });

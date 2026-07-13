@@ -70,6 +70,8 @@ describe("expandFunction", () => {
     expect(cypher).toContain("MATCH (fn:Function {name: $name, filePath: $filePath})");
     expect(cypher).toContain("(fn)-[outCall:CALLS]->(callee:Function)");
     expect(cypher).toContain("(caller:Function)-[inCall:CALLS]->(fn)");
+    expect(cypher).toContain(":USES_PROTO");
+    expect(cypher).toContain("peer:Function");
     // No 2-hop pattern like *2 or chained CALLS
     expect(cypher).not.toMatch(/CALLS\*[0-9]/);
     expect(params).toEqual({

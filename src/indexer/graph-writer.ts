@@ -7,6 +7,10 @@ import {
   upsertClass,
   upsertCallRelationship,
   upsertImportRelationship,
+  batchUpsertGraphQLDocuments,
+  batchUpsertGraphQLResolverLinks,
+  batchUpsertGraphQLUsages,
+  batchUpsertGraphQLFragmentSpreads,
 } from "../db/queries.js";
 import { resolveImport } from "./import-resolver.js";
 
@@ -85,9 +89,26 @@ export async function writeGraphEntities(
       await session.run(q.cypher, q.params);
     }
 
+    if ((entities.graphqlDocuments ?? []).length > 0) {
+      const q = batchUpsertGraphQLDocuments(entities.graphqlDocuments);
+      await session.run(q.cypher, q.params);
+      const resolverQ = batchUpsertGraphQLResolverLinks(entities.graphqlDocuments);
+      await session.run(resolverQ.cypher, resolverQ.params);
+    }
+
     // Upsert call relationships
     for (const call of entities.calls) {
       const q = upsertCallRelationship(call);
+      await session.run(q.cypher, q.params);
+    }
+
+    if ((entities.graphqlUsages ?? []).length > 0) {
+      const q = batchUpsertGraphQLUsages(entities.graphqlUsages);
+      await session.run(q.cypher, q.params);
+    }
+
+    if ((entities.graphqlFragmentSpreads ?? []).length > 0) {
+      const q = batchUpsertGraphQLFragmentSpreads(entities.graphqlFragmentSpreads);
       await session.run(q.cypher, q.params);
     }
 

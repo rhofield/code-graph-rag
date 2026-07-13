@@ -78,7 +78,7 @@ rho-graph discover --dry-run  # preview changes, write nothing
 | `status` | Show graph stats: repos, files by language, function/class counts |
 | `install-mcp` | Register the MCP server in `~/.claude/settings.json` and `~/.cursor/mcp.json` |
 | `install-hook` | Install `.git/hooks/post-commit` to auto-reindex on commit |
-| `query [cypher]` | Run a Cypher query or open an interactive REPL |
+| `query [cypher]` | Run a Cypher query or open an interactive REPL (`-v, --verbose` for full agent-oriented values) |
 | `visualize` | Open a browser-based graph visualization on port 3333 |
 | `mcp-serve` | Start the MCP server (called automatically by Claude Code / Cursor) |
 
@@ -100,11 +100,16 @@ rho-graph query --structure
 
 # Raw Cypher
 rho-graph query "MATCH (f:Function) WHERE f.name STARTS WITH 'get' RETURN f.name, f.filePath LIMIT 20"
+rho-graph query -v "MATCH (f:Function) RETURN f LIMIT 5" # full Neo4j object data for agents
 
 # Interactive REPL
 rho-graph query
 cypher> MATCH (c:Class)-[:CONTAINS]->(f:Function) RETURN c.name, count(f) ORDER BY count(f) DESC
 ```
+
+`rho-graph query --callers` defaults to a lean human-readable table with only
+`caller` and `file`. Use `-v` / `--verbose` to include call type, RPC,
+GraphQL, signature, and line metadata for agents.
 
 ### `visualize` options
 
@@ -316,6 +321,7 @@ node bin/rho-graph.js status
 # Query the graph
 node bin/rho-graph.js query --callers myFunction
 node bin/rho-graph.js query --structure
+node bin/rho-graph.js query -v "MATCH (f:Function) RETURN f LIMIT 5"
 node bin/rho-graph.js query   # interactive REPL
 
 # Launch the visualization (opens browser on port 3333)
@@ -340,6 +346,11 @@ node bin/rho-graph.js visualize
 
 # Tests
 npm test
+
+# Integration tests run against a dedicated ephemeral Neo4j instance
+# (bolt on 7688, data in tmpfs) so they never touch your dev graph
+npm run db:test            # start the test instance once
+npm run test:integration   # full suite including integration tests
 
 # Type check only (no emit)
 npm run lint

@@ -1,11 +1,13 @@
 // tests/integration/microservices.test.ts
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { resolve, join } from "node:path";
 import fs from "node:fs/promises";
 import { mkdirSync, rmSync, existsSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createConnection } from "../../src/db/connection.js";
+import { createTestConnection } from "../helpers/test-db.js";
 import { setupSchema } from "../../src/db/schema.js";
+import { functionCallersQuery } from "../../src/db/queries.js";
 import { indexRepository, createProtoRegistry } from "../../src/indexer/index.js";
 import { indexWorkspace } from "../../src/indexer/workspace.js";
 import { DEFAULT_CONFIG, loadConfig } from "../../src/config.js";
@@ -14,15 +16,155 @@ import { removeRepoFromGraph } from "../../src/indexer/graph-cleanup.js";
 
 const INTEGRATION = !!process.env.INTEGRATION;
 
+async function writeApolloGrpcWorkspace(root: string, options: {
+  operationField?: string;
+  resolverField?: string | null;
+  componentUsesQuery?: boolean;
+  serviceName?: string;
+  methodName?: string;
+  handlerMethodName?: string;
+} = {}): Promise<void> {
+  const operationField = options.operationField ?? "user";
+  const resolverField = options.resolverField === undefined ? "user" : options.resolverField;
+  const componentUsesQuery = options.componentUsesQuery ?? true;
+  const serviceName = options.serviceName ?? "UserService";
+  const methodName = options.methodName ?? "GetUser";
+  const handlerMethodName = options.handlerMethodName ?? "getUser";
+  const clientMethodName = methodName[0].toLowerCase() + methodName.slice(1);
+
+  await fs.mkdir(root, { recursive: true });
+  await fs.mkdir(join(root, "frontend/src"), { recursive: true });
+  await fs.mkdir(join(root, "api/src"), { recursive: true });
+  await fs.mkdir(join(root, "proto"), { recursive: true });
+  await fs.mkdir(join(root, "user-service/src"), { recursive: true });
+
+  await fs.writeFile(
+    join(root, "frontend/src/queries.ts"),
+    `import { gql } from "@apollo/client";
+
+export const GET_APOLLO_USER = gql\`
+  query GetApolloUser($id: ID!) {
+    ${operationField}(id: $id) {
+      id
+      name
+    }
+  }
+\`;
+`
+  );
+
+  await fs.writeFile(
+    join(root, "frontend/src/UserProfile.tsx"),
+    componentUsesQuery
+      ? `import { useQuery } from "@apollo/client";
+import { GET_APOLLO_USER } from "./queries";
+
+export function UserProfile({ id }: { id: string }) {
+  const { data } = useQuery(GET_APOLLO_USER, { variables: { id } });
+  return <div>{data?.${operationField}?.name}</div>;
+}
+`
+      : `export function UserProfile({ id }: { id: string }) {
+  return <div>{id}</div>;
+}
+`
+  );
+
+  await fs.writeFile(
+    join(root, "api/src/resolvers.ts"),
+    resolverField
+      ? `import { createPromiseClient } from "@connectrpc/connect";
+import { ${serviceName} } from "@buf/example_user.connect";
+
+const userClient = createPromiseClient(${serviceName}, {} as never);
+
+export const resolvers = {
+  Query: {
+    ${resolverField}: async (_parent: unknown, args: { id: string }) => {
+      return userClient.${clientMethodName}({ id: args.id });
+    },
+  },
+};
+`
+      : `export const resolvers = {
+  Query: {},
+};
+`
+  );
+
+  await fs.writeFile(
+    join(root, "proto/user.proto"),
+    `syntax = "proto3";
+package user.v1;
+service ${serviceName} {
+  rpc ${methodName} (${methodName}Request) returns (${methodName}Response);
+}
+message ${methodName}Request { string id = 1; }
+message ${methodName}Response { string id = 1; string name = 2; }
+`
+  );
+
+  await fs.writeFile(
+    join(root, "user-service/src/handler.ts"),
+    `import type { ${methodName}Request } from "@buf/example_user_pb";
+import type { ${serviceName}Server } from "@buf/example_user.connect";
+
+export class UserHandler implements ${serviceName}Server {
+  async ${handlerMethodName}(request: ${methodName}Request) {
+    return { id: request.id, name: "Ada" };
+  }
+}
+`
+  );
+}
+
+async function cleanupGraphRoot(db: ReturnType<typeof createConnection>, root: string): Promise<void> {
+  const session = db.session();
+  try {
+    await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root });
+    await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root });
+    await session.run("MATCH (m:ProtoMethod) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root });
+    await session.run("MATCH (m:ProtoMessage) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root });
+  } finally {
+    await session.close();
+  }
+}
+
+async function expectApolloGrpcChain(
+  db: ReturnType<typeof createConnection>,
+  root: string,
+  handlerMethodName = "getUser"
+): Promise<void> {
+  const handlerPath = join(root, "user-service/src/handler.ts");
+  const session = db.session();
+  try {
+    const chain = await session.run(
+      `
+      MATCH (frontend:Function {name: "UserProfile"})-[:USES_GRAPHQL]->(doc:GraphQLDocument)
+            -[:USES_GRAPHQL_RESOLVER]->(resolver:Function {name: "user"})
+            -[:RPC_CALLS]->(handler:Function {name: $handlerMethodName, filePath: $handlerPath})
+      RETURN frontend.name AS frontendName,
+             doc.name AS documentName,
+             resolver.name AS resolverName,
+             handler.name AS handlerName
+      `,
+      { handlerPath, handlerMethodName }
+    );
+    expect(chain.records).toHaveLength(1);
+    expect(chain.records[0].get("frontendName")).toBe("UserProfile");
+    expect(chain.records[0].get("documentName")).toBe("GetApolloUser");
+    expect(chain.records[0].get("resolverName")).toBe("user");
+    expect(chain.records[0].get("handlerName")).toBe(handlerMethodName);
+  } finally {
+    await session.close();
+  }
+}
+
 describe.skipIf(!INTEGRATION)("microservice integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
   });
 
@@ -84,11 +226,7 @@ describe.skipIf(!INTEGRATION)("gRPC monorepo integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
   });
 
@@ -320,11 +458,7 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
   let db: ReturnType<typeof createConnection>;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
     const session = db.session();
     try {
@@ -592,16 +726,389 @@ describe.skipIf(!INTEGRATION)("gRPC multirepo integration", () => {
   });
 });
 
+describe.skipIf(!INTEGRATION)("Apollo GraphQL to gRPC integration", () => {
+  let db: ReturnType<typeof createConnection>;
+  let tmpRoot: string;
+
+  beforeAll(async () => {
+    db = createTestConnection();
+    await setupSchema(db);
+
+    tmpRoot = join(tmpdir(), `apollo-graphql-grpc-${Date.now()}`);
+    await fs.mkdir(tmpRoot, { recursive: true });
+    await fs.mkdir(join(tmpRoot, "frontend/src"), { recursive: true });
+    await fs.mkdir(join(tmpRoot, "api/src"), { recursive: true });
+    await fs.mkdir(join(tmpRoot, "proto"), { recursive: true });
+    await fs.mkdir(join(tmpRoot, "user-service/src"), { recursive: true });
+
+    await fs.writeFile(
+      join(tmpRoot, "frontend/src/queries.ts"),
+      `import { gql } from "@apollo/client";
+
+export const GET_APOLLO_USER = gql\`
+  query GetApolloUser($id: ID!) {
+    user(id: $id) {
+      id
+      name
+    }
+  }
+\`;
+`
+    );
+
+    await fs.writeFile(
+      join(tmpRoot, "frontend/src/UserProfile.tsx"),
+      `import { useQuery } from "@apollo/client";
+import { GET_APOLLO_USER } from "./queries";
+
+export function UserProfile({ id }: { id: string }) {
+  const { data } = useQuery(GET_APOLLO_USER, { variables: { id } });
+  return <div>{data?.user?.name}</div>;
+}
+`
+    );
+
+    await fs.writeFile(
+      join(tmpRoot, "api/src/resolvers.ts"),
+      `import { createPromiseClient } from "@connectrpc/connect";
+import { UserService } from "@buf/example_user.connect";
+
+const userClient = createPromiseClient(UserService, {} as never);
+
+export const resolvers = {
+  Query: {
+    user: async (_parent: unknown, args: { id: string }) => {
+      return userClient.getUser({ id: args.id });
+    },
+  },
+};
+`
+    );
+
+    await fs.writeFile(
+      join(tmpRoot, "proto/user.proto"),
+      `syntax = "proto3";
+package user.v1;
+service UserService {
+  rpc GetUser (GetUserRequest) returns (GetUserResponse);
+}
+message GetUserRequest { string id = 1; }
+message GetUserResponse { string id = 1; string name = 2; }
+`
+    );
+
+    await fs.writeFile(
+      join(tmpRoot, "user-service/src/handler.ts"),
+      `import type { GetUserRequest } from "@buf/example_user_pb";
+import type { UserServiceServer } from "@buf/example_user.connect";
+
+export class UserHandler implements UserServiceServer {
+  async getUser(request: GetUserRequest) {
+    return { id: request.id, name: "Ada" };
+  }
+}
+`
+    );
+  });
+
+  beforeEach(async () => {
+    await cleanupGraphRoot(db, tmpRoot);
+    await writeApolloGrpcWorkspace(tmpRoot);
+  });
+
+  afterAll(async () => {
+    const session = db.session();
+    try {
+      await session.run("MATCH (n) WHERE n.filePath STARTS WITH $root DETACH DELETE n", { root: tmpRoot });
+      await session.run("MATCH (r:Repository) WHERE r.path STARTS WITH $root DETACH DELETE r", { root: tmpRoot });
+      await session.run("MATCH (m:ProtoMethod) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root: tmpRoot });
+      await session.run("MATCH (m:ProtoMessage) WHERE m.protoFile STARTS WITH $root DETACH DELETE m", { root: tmpRoot });
+    } finally {
+      await session.close();
+    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+    await db.close();
+  });
+
+  it("finds frontend Apollo usage when querying callers of a gRPC microservice handler", async () => {
+    const result = await indexWorkspace(
+      db,
+      tmpRoot,
+      [
+        { path: "frontend", name: "frontend" },
+        { path: "proto", name: "proto" },
+        { path: "api", name: "api" },
+        { path: "user-service", name: "user-service" },
+      ],
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.rpcEdgesCreated).toBeGreaterThan(0);
+
+    const handlerPath = join(tmpRoot, "user-service/src/handler.ts");
+    const session = db.session();
+    try {
+      const chain = await session.run(
+        `
+        MATCH (frontend:Function {name: "UserProfile"})-[:USES_GRAPHQL]->(doc:GraphQLDocument)
+              -[:USES_GRAPHQL_RESOLVER]->(resolver:Function {name: "user"})
+              -[:RPC_CALLS]->(handler:Function {name: "getUser", filePath: $handlerPath})
+        RETURN frontend.name AS frontendName,
+               doc.name AS documentName,
+               resolver.name AS resolverName,
+               handler.name AS handlerName
+        `,
+        { handlerPath }
+      );
+      expect(chain.records).toHaveLength(1);
+      expect(chain.records[0].get("frontendName")).toBe("UserProfile");
+      expect(chain.records[0].get("documentName")).toBe("GetApolloUser");
+      expect(chain.records[0].get("resolverName")).toBe("user");
+      expect(chain.records[0].get("handlerName")).toBe("getUser");
+
+      const q = functionCallersQuery({
+        functionName: "getUser",
+        filePath: handlerPath,
+      });
+      const callers = await session.run(q.cypher, q.params);
+      const rows = callers.records.map((r) => ({
+        callerName: r.get("callerName"),
+        callType: r.get("callType"),
+        graphqlDocument: r.get("graphqlDocument"),
+        graphqlResolver: r.get("graphqlResolver"),
+      }));
+
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          callerName: "UserProfile",
+          callType: "USES_GRAPHQL_RESOLVER",
+          graphqlDocument: "GetApolloUser",
+          graphqlResolver: "user",
+        })
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([
+    ["frontend before backend", ["frontend", "proto", "api", "user-service"]],
+    ["backend before frontend", ["proto", "user-service", "api", "frontend"]],
+    ["resolver before proto", ["api", "frontend", "proto", "user-service"]],
+  ])("resolves the frontend-to-handler chain when indexing order is %s", async (_name, order) => {
+    const result = await indexWorkspace(
+      db,
+      tmpRoot,
+      order.map((path) => ({ path, name: path })),
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+
+    expect(result.errors).toEqual([]);
+    await expectApolloGrpcChain(db, tmpRoot);
+  });
+
+  it("removes stale GraphQL resolver links when an operation changes fields", async () => {
+    await indexWorkspace(
+      db,
+      tmpRoot,
+      [
+        { path: "frontend", name: "frontend" },
+        { path: "proto", name: "proto" },
+        { path: "api", name: "api" },
+        { path: "user-service", name: "user-service" },
+      ],
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+    await expectApolloGrpcChain(db, tmpRoot);
+
+    await writeApolloGrpcWorkspace(tmpRoot, {
+      operationField: "viewer",
+      resolverField: "viewer",
+    });
+    await indexRepository(db, join(tmpRoot, "frontend"), { ...DEFAULT_CONFIG.index, include: ["**/*"] });
+    await indexRepository(db, join(tmpRoot, "api"), { ...DEFAULT_CONFIG.index, include: ["**/*"] });
+
+    const session = db.session();
+    try {
+      const oldLink = await session.run(
+        `
+        MATCH (:GraphQLDocument {name: "GetApolloUser"})-[:USES_GRAPHQL_RESOLVER]->(resolver:Function {name: "user"})
+        WHERE resolver.filePath STARTS WITH $root
+        RETURN count(*) AS count
+        `,
+        { root: tmpRoot }
+      );
+      expect(oldLink.records[0].get("count").toNumber()).toBe(0);
+
+      const newLink = await session.run(
+        `
+        MATCH (:GraphQLDocument {name: "GetApolloUser"})-[:USES_GRAPHQL_RESOLVER]->(resolver:Function {name: "viewer"})
+        WHERE resolver.filePath STARTS WITH $root
+        RETURN count(*) AS count
+        `,
+        { root: tmpRoot }
+      );
+      expect(newLink.records[0].get("count").toNumber()).toBe(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("removes stale GraphQL resolver links when the resolver is deleted", async () => {
+    await indexWorkspace(
+      db,
+      tmpRoot,
+      [
+        { path: "frontend", name: "frontend" },
+        { path: "proto", name: "proto" },
+        { path: "api", name: "api" },
+        { path: "user-service", name: "user-service" },
+      ],
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+    await expectApolloGrpcChain(db, tmpRoot);
+
+    await writeApolloGrpcWorkspace(tmpRoot, { resolverField: null });
+    await indexRepository(db, join(tmpRoot, "api"), { ...DEFAULT_CONFIG.index, include: ["**/*"] });
+
+    const session = db.session();
+    try {
+      const rels = await session.run(
+        `
+        MATCH (:GraphQLDocument {name: "GetApolloUser"})-[r:USES_GRAPHQL_RESOLVER]->(resolver:Function)
+        WHERE resolver.filePath STARTS WITH $root
+        RETURN count(r) AS count
+        `,
+        { root: tmpRoot }
+      );
+      expect(rels.records[0].get("count").toNumber()).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("removes stale frontend usage links when the component stops using the operation", async () => {
+    await indexWorkspace(
+      db,
+      tmpRoot,
+      [
+        { path: "frontend", name: "frontend" },
+        { path: "proto", name: "proto" },
+        { path: "api", name: "api" },
+        { path: "user-service", name: "user-service" },
+      ],
+      { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+    );
+    await expectApolloGrpcChain(db, tmpRoot);
+
+    await writeApolloGrpcWorkspace(tmpRoot, { componentUsesQuery: false });
+    await indexRepository(db, join(tmpRoot, "frontend"), { ...DEFAULT_CONFIG.index, include: ["**/*"] });
+
+    const session = db.session();
+    try {
+      const usage = await session.run(
+        `
+        MATCH (frontend:Function {name: "UserProfile"})-[r:USES_GRAPHQL]->(:GraphQLDocument)
+        WHERE frontend.filePath STARTS WITH $root
+        RETURN count(r) AS count
+        `,
+        { root: tmpRoot }
+      );
+      expect(usage.records[0].get("count").toNumber()).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.fails("documents current ambiguity when two APIs expose the same Query.user field", async () => {
+    const ambiguousRoot = join(tmpdir(), `apollo-ambiguous-${Date.now()}`);
+    try {
+      await writeApolloGrpcWorkspace(ambiguousRoot);
+      await fs.mkdir(join(ambiguousRoot, "profile-proto"), { recursive: true });
+      await fs.mkdir(join(ambiguousRoot, "profile-api/src"), { recursive: true });
+      await fs.mkdir(join(ambiguousRoot, "profile-service/src"), { recursive: true });
+
+      await fs.writeFile(
+        join(ambiguousRoot, "profile-proto/profile.proto"),
+        `syntax = "proto3";
+package profile.v1;
+service ProfileService {
+  rpc GetProfile (GetProfileRequest) returns (GetProfileResponse);
+}
+message GetProfileRequest { string id = 1; }
+message GetProfileResponse { string id = 1; string name = 2; }
+`
+      );
+      await fs.writeFile(
+        join(ambiguousRoot, "profile-api/src/resolvers.ts"),
+        `import { createPromiseClient } from "@connectrpc/connect";
+import { ProfileService } from "@buf/example_profile.connect";
+
+const profileClient = createPromiseClient(ProfileService, {} as never);
+
+export const resolvers = {
+  Query: {
+    user: async (_parent: unknown, args: { id: string }) => {
+      return profileClient.getProfile({ id: args.id });
+    },
+  },
+};
+`
+      );
+      await fs.writeFile(
+        join(ambiguousRoot, "profile-service/src/handler.ts"),
+        `import type { GetProfileRequest } from "@buf/example_profile_pb";
+import type { ProfileServiceServer } from "@buf/example_profile.connect";
+
+export class ProfileHandler implements ProfileServiceServer {
+  async getProfile(request: GetProfileRequest) {
+    return { id: request.id, name: "Grace" };
+  }
+}
+`
+      );
+
+      await indexWorkspace(
+        db,
+        ambiguousRoot,
+        [
+          { path: "frontend", name: "frontend" },
+          { path: "proto", name: "proto" },
+          { path: "user-service", name: "user-service" },
+          { path: "api", name: "api" },
+          { path: "profile-proto", name: "profile-proto" },
+          { path: "profile-service", name: "profile-service" },
+          { path: "profile-api", name: "profile-api" },
+        ],
+        { ...DEFAULT_CONFIG.index, include: ["**/*"] }
+      );
+
+      const q = functionCallersQuery({
+        functionName: "getProfile",
+        filePath: join(ambiguousRoot, "profile-service/src/handler.ts"),
+      });
+      const session = db.session();
+      try {
+        const callers = await session.run(q.cypher, q.params);
+        const frontendRows = callers.records.filter((r) => r.get("callerName") === "UserProfile");
+        expect(frontendRows).toHaveLength(0);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await cleanupGraphRoot(db, ambiguousRoot);
+      rmSync(ambiguousRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(!INTEGRATION)("pure-container discovery integration", () => {
   let db: ReturnType<typeof createConnection>;
   let tmpRoot: string;
 
   beforeAll(async () => {
-    db = createConnection({
-      uri: process.env.NEO4J_URI ?? "bolt://localhost:7687",
-      username: process.env.NEO4J_USERNAME ?? "neo4j",
-      password: process.env.NEO4J_PASSWORD ?? "code-graph-rag",
-    });
+    db = createTestConnection();
     await setupSchema(db);
 
     // Build a pure-container: two existing fixture microservices copied into
